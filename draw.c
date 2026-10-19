@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -153,4 +154,21 @@ void fb_get(char *d, unsigned *r, unsigned *g, unsigned *b)
 	*r = ((c >> rl) & ((1u << vinfo.red.length) - 1)) << rr;
 	*g = ((c >> gl) & ((1u << vinfo.green.length) - 1)) << gr;
 	*b = ((c >> bl) & ((1u << vinfo.blue.length) - 1)) << br;
+}
+
+void term_setup(struct termios *term) {
+	struct termios _cfg;
+	tcgetattr(0, term);
+	_cfg = *term;
+	_cfg.c_lflag &= ~ICANON;
+	_cfg.c_lflag &= ~ECHO;
+	tcsetattr(0, TCSAFLUSH, &_cfg);
+	printf("\x1b[?25l");	/* hide the cursor */
+	printf("\x1b[2J");	/* clear the screen */
+	fflush(stdout);
+}
+
+void term_cleanup(struct termios *term) {
+	tcsetattr(0, 0, term);
+	printf("\x1b[?25h\n");	/* show the cursor */
 }

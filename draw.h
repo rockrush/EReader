@@ -3,7 +3,6 @@
 #define FBM_CLR(m)	((m) & 0x0fff)		/* bits per color (12 bits) */
 #define FBM_ORD(m)	(((m) >> 20) & 0x07)	/* color order (3 bits) */
 
-/* main functions */
 int fb_init(char *dev);
 void fb_free(void);
 unsigned fb_mode(void);
@@ -13,3 +12,6 @@ int fb_cols(void);
 void fb_cmap(void);
 unsigned fb_val(int r, int g, int b);
 void fb_get(char *d, unsigned *r, unsigned *g, unsigned *b);
+
+void term_setup(struct termios *term);
+void term_cleanup(struct termios *term);

@@ -295,19 +295,19 @@ static int8_t wifi_level(void) {
 		return 3;
 }
 
-/* 在页面下方的灰色区域绘制状态图标与按钮 */
-static void draw_ui(void)
+/* 在空白区域（顶部行 gtop）绘制状态图标与按钮 */
+static void draw_ui(int gtop)
 {
-	int gtop = prow + prows - srow;
 	int gh, bar_h, bar_top, pad = 2;
 
 	if (gtop < 0)
 		gtop = 0;
 	if (gtop >= srows)
-		return;			/* 页面填满屏幕，无灰色区域 */
+		return;			/* 页面填满屏幕，无空白区域 */
 	gh = srows - gtop;
 	if (gh < 32)
-		return;			/* 灰色区域太小，不绘制 */
+		return;			/* 空白区域太小，不绘制 */
+	printf("draw_ui: %d\n", gh);
 
 	bar_h = gh - pad * 2;
 	bar_top = srows - bar_h - pad;
@@ -358,7 +358,7 @@ static void draw(void)
 		memcpy(fb_mem(i - srow), rbuf, scols * bpp);
 	}
 	free(rbuf);
-	draw_ui();
+	draw_ui(prow + prows - srow);
 }
 
 /* 满宽渲染，保证去白边后仍有足够分辨率 */
@@ -726,6 +726,7 @@ struct fm_view {
 };
 
 #define FM_FONT_PX	16	/* 基准字号（像素），按屏幕缩放倍数放大 */
+#define FM_UI_ROWS	81	/* 状态栏占用的屏幕底部行数 */
 #define FM_FIRST	32
 #define FM_LAST		126
 
@@ -774,6 +775,12 @@ static int fm_scale(void)
 {
 	int s = MIN(fm_lw() / 400, fm_lh() / 240);
 	return MIN(3, MAX(1, s));
+}
+
+/* 状态栏占用的屏幕底部行数；屏幕太小时不显示 */
+static int fm_ui_rows(void)
+{
+	return MIN(fm_lw(), fm_lh()) >= 2 * FM_UI_ROWS ? FM_UI_ROWS : 0;
 }
 
 /* 逻辑坐标下的矩形：逆时针 90 度后映射到屏幕 */
@@ -1090,6 +1097,8 @@ static void fm_draw(struct fm_view *v)
 	int header_h = MAX(1, fm_line_height) + 2 * pad;
 	int y0 = header_h + pad / 2;
 	int visible = (lh - y0 - pad) / line_h;
+	int ui_rows = fm_ui_rows();
+	int x0 = ui_rows;	/* 逆时针旋转后状态栏落在左侧，文字让开 */
 	int i;
 
 	if (visible < 1)
@@ -1104,28 +1113,31 @@ static void fm_draw(struct fm_view *v)
 		v->top = 0;
 
 	fm_fill_rect(0, 0, lw, lh, UI_BG, UI_BG, UI_BG);
-	fm_text(pad, pad, v->path, UI_ICON, UI_ICON, UI_ICON);
-	fm_fill_rect(0, header_h, lw, MAX(1, scale), UI_BORDER, UI_BORDER, UI_BORDER);
+	if (ui_rows)
+		fm_fill_rect(0, 0, x0, lh, GRAY, GRAY, GRAY);
+	fm_text(x0 + pad, pad, v->path, UI_ICON, UI_ICON, UI_ICON);
+	fm_fill_rect(x0, header_h, lw - x0, MAX(1, scale), UI_BORDER, UI_BORDER, UI_BORDER);
 
 	if (!v->n) {
-		fm_text(pad, y0 + scale, "(empty)",
-			UI_BORDER, UI_BORDER, UI_BORDER);
-		return;
-	}
-	for (i = v->top; i < v->n && i < v->top + visible; i++) {
-		const struct fm_entry *e = &v->ents[i];
-		int y = y0 + (i - v->top) * line_h;
-		unsigned fg = (i == v->sel) ? UI_BG : UI_ICON;
-		unsigned bg = (i == v->sel) ? UI_ICON : UI_BG;
+		fm_text(x0 + pad, y0 + scale, "(empty)", UI_BORDER, UI_BORDER, UI_BORDER);
+	} else {
+		for (i = v->top; i < v->n && i < v->top + visible; i++) {
+			const struct fm_entry *e = &v->ents[i];
+			int y = y0 + (i - v->top) * line_h;
+			unsigned fg = (i == v->sel) ? UI_BG : UI_ICON;
+			unsigned bg = (i == v->sel) ? UI_ICON : UI_BG;
 
-		int x;
+			int x;
 
-		if (i == v->sel)
-			fm_fill_rect(0, y, lw, line_h, bg, bg, bg);
-		x = fm_text(pad, y + scale, e->name, fg, fg, fg);
-		if (e->isdir)
-			fm_char(x, y + scale, '/', fg, fg, fg);
+			if (i == v->sel)
+				fm_fill_rect(x0, y, lw - x0, line_h, bg, bg, bg);
+			x = fm_text(x0 + pad, y + scale, e->name, fg, fg, fg);
+			if (e->isdir)
+				fm_char(x, y + scale, '/', fg, fg, fg);
+		}
 	}
+	if (ui_rows)
+		draw_ui(srows - ui_rows);
 }
 
 static int show_filemgr(const char *path)

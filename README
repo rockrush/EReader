@@ -14,3 +14,6 @@ File manager keys:
 - q  go to the parent folder
 - j  select the next entry
 - k  select the previous entry
+
+Like the PDF view, the file manager shows the status bar (page buttons,
+battery, WiFi) along the bottom edge of the framebuffer.

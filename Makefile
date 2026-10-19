@@ -1,5 +1,6 @@
 #CC = clang
-CFLAGS = -Wall -O2 -Wunused -Wunused-function
+CFLAGS = -Wall -O2 -Wunused -Wunused-function $(shell pkg-config --cflags freetype2)
+LDLIBS = $(shell pkg-config --libs freetype2)
 TARGETS = ereader
 
 all: $(TARGETS)
@@ -9,7 +10,7 @@ all: $(TARGETS)
 
 # PDF support using poppler
 ereader: ereader.o poppler.c draw.o
-	$(CXX) $(CFLAGS) -o $@ $^ $(shell pkg-config --cflags --libs poppler-cpp) $(shell pkg-config --libs libfyaml)
+	$(CXX) $(CFLAGS) -o $@ $^ $(shell pkg-config --cflags --libs poppler-cpp) $(shell pkg-config --libs libfyaml) $(LDLIBS)
 
 .PHONY: clean count
 clean:

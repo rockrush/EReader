@@ -22,6 +22,17 @@ static int nr, ng, nb;			/* color levels */
 static int rl, rr, gl, gr, bl, br;	/* shifts per color */
 static int xres, yres, xoff, yoff;	/* drawing region */
 
+/* 优先使用等宽字体；也可用环境变量 EREADER_FONT 指定字体文件 */
+const char *font_paths[] = {
+	"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+	"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+	"/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+	"/usr/share/fonts/truetype/hack/Hack-Regular.ttf",
+	"/usr/share/fonts/truetype/droid/DroidSansMono.ttf",
+	NULL,
+};
+
 static int fb_len(void)
 {
 	return finfo.line_length * vinfo.yres_virtual;

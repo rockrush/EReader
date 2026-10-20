@@ -1,19 +1,16 @@
-#include <ctype.h>
-#include <dirent.h>
-#include <limits.h>
-#include <math.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/stat.h>
-#include <termios.h>
-#include <unistd.h>
-#include <pthread.h>
+#include <signal.h>
+#include <limits.h>
+#include <dirent.h>
 #include <libfyaml.h>
-#include <ft2build.h>
-#include FT_FREETYPE_H
+#include <sys/stat.h>
+#include <pthread.h>
+#include <math.h>
+#include <termios.h>
+
 #include "draw.h"
 #include "doc.h"
 
@@ -50,11 +47,11 @@ static char *pbuf;		/* current page */
 static int prows, pcols;	/* current page dimensions */
 static int prow, pcol;		/* page position */
 static int srow, scol;		/* screen position */
-static int bpp;			/* bytes per pixel */
+int bpp;			/* bytes per pixel */
 static int count;
 
 /* 在屏幕坐标设置一个像素（越界自动忽略） */
-static void px(int x, int y, unsigned r, unsigned g, unsigned b)
+void px(int x, int y, unsigned r, unsigned g, unsigned b)
 {
 	char c[4];
 	if (x < 0 || y < 0 || x >= cfg.scr_w || y >= cfg.scr_h)
@@ -64,7 +61,7 @@ static void px(int x, int y, unsigned r, unsigned g, unsigned b)
 }
 
 /* 填充矩形（屏幕坐标，越界自动裁剪） */
-static void fill_rect(int x, int y, int w, int h, unsigned r, unsigned g, unsigned b)
+void fill_rect(int x, int y, int w, int h, unsigned r, unsigned g, unsigned b)
 {
 	int i, j, x1 = x + w, y1 = y + h;
 	char c[4];
@@ -455,8 +452,7 @@ static char *crop_page(char *buf, int *rows, int *cols, int bpp, int x0, int y0,
 }
 
 /* 双线性缩放：把 sw×sh 源缓冲区拉伸到 dw×dh 目标缓冲区（帧缓冲字节序） */
-static void scale_bilinear(char *src, int sw, int sh, char *dst, int dw, int dh,
-		int bpp)
+static void scale_bilinear(char *src, int sw, int sh, char *dst, int dw, int dh, int bpp)
 {
 	int x, y;
 	for (y = 0; y < dh; y++) {
@@ -534,44 +530,42 @@ static int renderpage(int p)
 		return 1;
 	}
 	/* 白色 A4 纸张背景 */
-	{
-		char white[4];
-		int i, j;
-		fb_set(white, 255, 255, 255);
-		for (i = 0; i < th; i++) {
-			char *row = dst + (size_t) i * tw * bpp;
-			for (j = 0; j < tw; j++)
-				memcpy(row + (size_t) j * bpp, white, bpp);
-		}
+	char white[4];
+	int i, j;
+	fb_set(white, 255, 255, 255);
+	for (i = 0; i < th; i++) {
+		char *row = dst + (size_t) i * tw * bpp;
+		for (j = 0; j < tw; j++)
+			memcpy(row + (size_t) j * bpp, white, bpp);
 	}
+
 	/* 内容等比例缩放（不变形）到纸张内最大，居中放置，宽度不足处留白 */
-	{
-		int scale_pct = MIN(tw * 100 / pcols, th * 100 / prows);
-		int cw, ch, ox, oy, y;
-		char *tmp;
-		if (scale_pct < 1)
-			scale_pct = 1;
-		cw = pcols * scale_pct / 100;
-		ch = prows * scale_pct / 100;
-		if (cw < 1)
-			cw = 1;
-		if (ch < 1)
-			ch = 1;
-		tmp = malloc((size_t) cw * ch * bpp);
-		if (!tmp) {
-			free(buf);
-			free(dst);
-			return 1;
-		}
-		scale_bilinear(buf, pcols, prows, tmp, cw, ch, bpp);
+	int scale_pct = MIN(tw * 100 / pcols, th * 100 / prows);
+	int cw, ch, ox, oy, y;
+	char *tmp;
+	if (scale_pct < 1)
+		scale_pct = 1;
+	cw = pcols * scale_pct / 100;
+	ch = prows * scale_pct / 100;
+	if (cw < 1)
+		cw = 1;
+	if (ch < 1)
+		ch = 1;
+	tmp = malloc((size_t) cw * ch * bpp);
+	if (!tmp) {
 		free(buf);
-		ox = (tw - cw) / 2;
-		oy = (th - ch) / 2;
-		for (y = 0; y < ch; y++)
-			memcpy(dst + ((size_t) (oy + y) * tw + ox) * bpp,
-				tmp + (size_t) y * cw * bpp, (size_t) cw * bpp);
-		free(tmp);
+		free(dst);
+		return 1;
 	}
+	scale_bilinear(buf, pcols, prows, tmp, cw, ch, bpp);
+	free(buf);
+	ox = (tw - cw) / 2;
+	oy = (th - ch) / 2;
+	for (y = 0; y < ch; y++)
+		memcpy(dst + ((size_t) (oy + y) * tw + ox) * bpp,
+			tmp + (size_t) y * cw * bpp, (size_t) cw * bpp);
+	free(tmp);
+
 	pbuf = dst;
 	prows = th;
 	pcols = tw;
@@ -633,10 +627,9 @@ void fb_set(char *d, unsigned r, unsigned g, unsigned b)
 		d[i] = (c >> (i << 3)) & 0xff;
 }
 
-static int show_pdf(char *path)
+int show_pdf(char *path)
 {
 	int c, retval = EXIT_FAILURE;
-	printf("show_pdf: %s\n", path);
 	if (!path || !strlen(path)) {	// 此时显示文件管理器
 		fprintf(stderr, "no PDF file specified\n");
 		goto fail_file;
@@ -696,242 +689,14 @@ fail_file:
 	return retval;
 }
 
-struct fm_entry {
-	char name[NAME_MAX + 1];
-	int isdir;
-	int isreg;
-};
-
-struct fm_view {
-	char path[PATH_MAX];
-	struct fm_entry *ents;
-	int n;
-	int sel;
-	int top;
-};
-
-#define FM_FONT_PX	10	/* 基准字号（像素），按屏幕缩放倍数放大 */
-#define FM_FIRST	32
-#define FM_LAST		126
-
-struct fm_glyph {
-	int w, h;		/* 位图尺寸 */
-	int left, top;		/* 位图相对基线的偏移 */
-	int advance;		/* 步进（像素） */
-	unsigned char *bitmap;	/* 8 位灰度位图，行宽为 w */
-	int loaded;
-};
-
-/* 优先使用等宽字体；也可用环境变量 EREADER_FONT 指定字体文件 */
-static const char *fm_font_paths[] = {
-	"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-	"/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
-	"/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-	"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-	"/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
-	"/usr/share/fonts/truetype/freefont/FreeMono.ttf",
-	"/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
-	"/usr/share/fonts/truetype/hack/Hack-Regular.ttf",
-	"/usr/share/fonts/truetype/droid/DroidSansMono.ttf",
-	"/system/fonts/DroidSansMono.ttf",
-	NULL,
-};
-
-static FT_Library fm_lib;
-static FT_Face fm_face;
-static struct fm_glyph fm_glyphs[FM_LAST - FM_FIRST + 1];
-static int fm_px;		/* 当前字号（像素） */
-static int fm_ascent;		/* 基线到行顶的距离 */
-static int fm_line_height;	/* 行高 */
-
 /* 文件管理器界面逆时针旋转 90 度：逻辑宽高与屏幕宽高互换 */
-static int fm_lw(void)	{return cfg.scr_h - cfg.ui_h;}
-static int fm_lh(void)	{return cfg.scr_w;}
+int fm_lw(void)	{return cfg.scr_h - cfg.ui_h;}
+int fm_lh(void)	{return cfg.scr_w;}
 
-static int fm_scale(void)
-{
-	int s = MIN(fm_lw() / 400, fm_lh() / 240);
-	return MIN(3, MAX(1, s));
-}
-
-/* 逻辑坐标下的矩形：逆时针 90 度后映射到屏幕 */
-static void fm_fill_rect(int x, int y, int w, int h, unsigned r, unsigned g, unsigned b)
-{
-	fill_rect(y, fm_lw() - x - w, h, w, r, g, b);
-}
-
-static void fm_font_close(void)
-{
-	int i;
-
-	for (i = 0; i < FM_LAST - FM_FIRST + 1; i++) {
-		free(fm_glyphs[i].bitmap);
-		memset(&fm_glyphs[i], 0, sizeof(fm_glyphs[i]));
-	}
-	if (fm_face) {
-		FT_Done_Face(fm_face);
-		fm_face = NULL;
-	}
-	if (fm_lib) {
-		FT_Done_FreeType(fm_lib);
-		fm_lib = NULL;
-	}
-	fm_px = 0;
-	fm_ascent = 0;
-	fm_line_height = 0;
-}
-
-static int fm_font_load(void)
-{
-	const char *env, *path = NULL;
-	int px = FM_FONT_PX * fm_scale();
-	int i;
-
-	if (fm_face && px == fm_px)
-		return 0;
-	fm_font_close();
-	if (FT_Init_FreeType(&fm_lib))
-		return 1;
-	fm_face = NULL;
-	env = getenv("EREADER_FONT");
-	if (env && env[0]) {
-		if (!FT_New_Face(fm_lib, env, 0, &fm_face))
-			path = env;
-	} else {
-		for (i = 0; fm_font_paths[i]; i++)
-			if (!FT_New_Face(fm_lib, fm_font_paths[i], 0, &fm_face)) {
-				path = fm_font_paths[i];
-				break;
-			}
-	}
-	if (!path || !fm_face ||
-			FT_Set_Pixel_Sizes(fm_face, 0, px)) {
-		fprintf(stderr, "cannot load font\n");
-		fm_font_close();
-		return 1;
-	}
-	fm_px = px;
-	fm_ascent = (fm_face->size->metrics.ascender + 63) >> 6;
-	fm_line_height = (fm_face->size->metrics.height + 63) >> 6;
-	return 0;
-}
-
-/* 字体由文件管理器和文本阅读器共用，最后一个使用者退出时才释放 */
-static int fm_font_users;
-
-static int fm_font_acquire(void)
-{
-	if (fm_font_load())
-		return 1;
-	fm_font_users++;
-	return 0;
-}
-
-static void fm_font_release(void)
-{
-	if (fm_font_users > 0 && --fm_font_users == 0)
-		fm_font_close();
-}
-
-/* 惰性缓存 ASCII 字形，按当前字号渲染一次 */
-static struct fm_glyph *fm_glyph_get(unsigned char c)
-{
-	struct fm_glyph *gl;
-	FT_GlyphSlot slot;
-	FT_Bitmap *bm;
-	int row;
-
-	if (c < FM_FIRST || c > FM_LAST)
-		c = '?';
-	gl = &fm_glyphs[c - FM_FIRST];
-	if (gl->loaded)
-		return gl;
-	gl->loaded = 1;
-	if (!fm_face || FT_Load_Char(fm_face, c, FT_LOAD_RENDER))
-		return gl;
-	slot = fm_face->glyph;
-	bm = &slot->bitmap;
-	gl->w = (int) bm->width;
-	gl->h = (int) bm->rows;
-	gl->left = slot->bitmap_left;
-	gl->top = slot->bitmap_top;
-	gl->advance = (slot->advance.x + 32) >> 6;
-	if (!gl->w || !gl->h)
-		return gl;
-	gl->bitmap = malloc((size_t) gl->w * gl->h);
-	if (!gl->bitmap) {
-		gl->w = 0;
-		gl->h = 0;
-		return gl;
-	}
-	for (row = 0; row < gl->h; row++) {
-		long off = bm->pitch >= 0 ? (long) row * bm->pitch
-			: (long) (gl->h - 1 - row) * -bm->pitch;
-		memcpy(gl->bitmap + (size_t) row * gl->w, bm->buffer + off, gl->w);
-	}
-	return gl;
-}
-
-/* 单个字符的步进（越界字符按 '?' 处理） */
-static int fm_advance(unsigned char c)
-{
-	int adv = fm_glyph_get(c)->advance;
-
-	return adv > 0 ? adv : 1;
-}
-
-/* 按字形灰度覆盖值把前景色混合到帧缓冲（逻辑坐标，绘制时转 90 度） */
-static void fm_blend_px(int x, int y, int a, unsigned r, unsigned g, unsigned b)
-{
-	char *d;
-	unsigned br, bg, bb;
-	int sx = y, sy = fm_lw() - 1 - x;	/* 屏幕坐标 */
-
-	if (x < 0 || y < 0 || x >= fm_lw() || y >= fm_lh())
-		return;
-	if (a >= 255) {
-		px(sx, sy, r, g, b);
-		return;
-	}
-	d = fb_mem(sy) + (size_t) sx * bpp;
-	fb_get(d, &br, &bg, &bb);
-	px(sx, sy, (r * a + br * (255 - a)) / 255,
-		(g * a + bg * (255 - a)) / 255,
-		(b * a + bb * (255 - a)) / 255);
-}
-
-/* y 为文字行顶部，返回绘制后的横向位置 */
-static int fm_char(int x, int y, unsigned char c,
-		unsigned r, unsigned g, unsigned b)
-{
-	struct fm_glyph *gl = fm_glyph_get(c);
-	int bx = x + gl->left;
-	int by = y + fm_ascent - gl->top;
-	int row, col;
-
-	for (row = 0; gl->bitmap && row < gl->h; row++) {
-		const unsigned char *src = gl->bitmap + (size_t) row * gl->w;
-		for (col = 0; col < gl->w; col++)
-			if (src[col])
-				fm_blend_px(bx + col, by + row, src[col], r, g, b);
-	}
-	return gl->advance;
-}
-
-static int fm_text(int x, int y, const char *s,
-		unsigned r, unsigned g, unsigned b)
-{
-	while (*s) {
-		unsigned char c = (unsigned char) *s++;
-		if (c >= 0x80) {
-			while (((unsigned char) *s & 0xc0) == 0x80)
-				s++;
-			c = '?';
-		}
-		x += fm_char(x, y, c, r, g, b);
-	}
-	return x;
-}
+int fm_font_acquire(void);
+int fm_font_release(void);
+int fm_advance(unsigned char c);
+int fm_char(int x, int y, unsigned char c, unsigned r, unsigned g, unsigned b);
 
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
 #define TX_MAX_LINES	(1 << 20)	/* 折行后的显示行上限 */
@@ -951,6 +716,7 @@ struct tx_view {
 };
 
 /* 载入文本：展开 tab，UTF-8 与控制字符换成可显示的单字节 */
+// TODO: 读不了 /proc 下大小为零的文件
 static char *tx_load(const char *path, size_t *size)
 {
 	FILE *fp;
@@ -961,8 +727,7 @@ static char *tx_load(const char *path, size_t *size)
 	fp = fopen(path, "r");
 	if (!fp)
 		return NULL;
-	if (fseek(fp, 0, SEEK_END) || (sz = ftell(fp)) < 0 ||
-			fseek(fp, 0, SEEK_SET)) {
+	if (fseek(fp, 0, SEEK_END) || (sz = ftell(fp)) < 0 || fseek(fp, 0, SEEK_SET)) {
 		fclose(fp);
 		return NULL;
 	}
@@ -1089,35 +854,33 @@ static int tx_text(int x, int y, const char *s, size_t len, unsigned r, unsigned
 	return x;
 }
 
+extern int fm_line_height;
 static int tx_line_h(void)
 {
-	return MAX(1, fm_line_height) + 2 * fm_scale();
+	return MAX(1, fm_line_height) + 2 * FBM_FONT_SCALE;
 }
 
 static int tx_visible(void)
 {
-	int visible = (fm_lh() - 12 * fm_scale()) / tx_line_h();
-
+	int visible = (fm_lh() - 12 * FBM_FONT_SCALE) / tx_line_h();
 	return MAX(1, visible);
 }
 
 static void tx_draw(struct tx_view *v)
 {
-	int pad = 6 * fm_scale();
+	int pad = 6 * FBM_FONT_SCALE;
 	int line_h = tx_line_h();
 	int visible = tx_visible();
-	int i;
 
-	fm_fill_rect(0, 0, fm_lw(), fm_lh(), 255, 255, 255);
-	for (i = 0; i < visible && v->top + i < v->n; i++) {
+	fill_rect(0, 0, fm_lh(), fm_lw(), 255, 255, 255);
+	for (int i = 0; i < visible && v->top + i < v->n; i++) {
 		const struct tx_line *ln = &v->lines[v->top + i];
-
 		tx_text(pad, pad + i * line_h, v->text + ln->off, ln->len, UI_ICON, UI_ICON, UI_ICON);
 	}
 }
 
 /* 文本阅读器：j/k 上下翻半屏，q 退出 */
-static int show_text(const char *path)
+int show_text(const char *path)
 {
 	struct tx_view v;
 	int c, step, visible, maxtop, retval = EXIT_FAILURE;
@@ -1130,7 +893,7 @@ static int show_text(const char *path)
 		fprintf(stderr, "cannot open <%s>\n", path);
 		goto out;
 	}
-	if (tx_format(&v, fm_lw() - 12 * fm_scale()))
+	if (tx_format(&v, fm_lw() - 12 * FBM_FONT_SCALE))
 		goto out;
 	visible = tx_visible();
 	maxtop = MAX(0, v.n - visible);
@@ -1161,108 +924,8 @@ out:
 	return retval;
 }
 
-static int fm_cmp(const void *a, const void *b)
-{
-	const struct fm_entry *ea = a;
-	const struct fm_entry *eb = b;
-	int d;
-
-	if (ea->isdir != eb->isdir)
-		return ea->isdir ? -1 : 1;
-	d = strcasecmp(ea->name, eb->name);
-	return d ? d : strcmp(ea->name, eb->name);
-}
-
-static int fm_scan(const char *path, struct fm_entry **out, int *nout)
-{
-	struct fm_entry *ents = NULL;
-	struct dirent *de;
-	int n = 0, cap = 0;
-	DIR *dir = opendir(path);
-
-	if (!dir)
-		return 1;
-	while ((de = readdir(dir))) {
-		char full[PATH_MAX];
-		struct fm_entry *ent;
-		struct stat st;
-		size_t len;
-
-		if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
-			continue;
-		if (snprintf(full, sizeof(full), "%s%s%s", path,
-				strcmp(path, "/") ? "/" : "", de->d_name) >= (int) sizeof(full))
-			continue;
-		if (stat(full, &st))
-			continue;
-		if (n == cap) {
-			int ncap = cap ? cap * 2 : 64;
-			struct fm_entry *tmp = realloc(ents, (size_t) ncap * sizeof(*tmp));
-			if (!tmp) {
-				free(ents);
-				closedir(dir);
-				return 1;
-			}
-			ents = tmp;
-			cap = ncap;
-		}
-		ent = &ents[n++];
-		len = strlen(de->d_name);
-		if (len > sizeof(ent->name) - 1)
-			len = sizeof(ent->name) - 1;
-		memcpy(ent->name, de->d_name, len);
-		ent->name[len] = 0;
-		ent->isdir = S_ISDIR(st.st_mode);
-		ent->isreg = S_ISREG(st.st_mode);
-	}
-	closedir(dir);
-	if (n > 1)
-		qsort(ents, n, sizeof(*ents), fm_cmp);
-	*out = ents;
-	*nout = n;
-	return 0;
-}
-
-static void fm_trim_slash(char *path)
-{
-	size_t len = strlen(path);
-	while (len > 1 && path[len - 1] == '/')
-		path[--len] = 0;
-}
-
-static int fm_chdir(struct fm_view *v, const char *path, const char *select)
-{
-	struct fm_entry *ents;
-	int n, i;
-
-	if (fm_scan(path, &ents, &n))
-		return 1;
-	free(v->ents);
-	v->ents = ents;
-	v->n = n;
-	strncpy(v->path, path, sizeof(v->path) - 1);
-	v->path[sizeof(v->path) - 1] = 0;
-	v->sel = 0;
-	v->top = 0;
-	if (select) {
-		for (i = 0; i < n; i++)
-			if (!strcmp(v->ents[i].name, select)) {
-				v->sel = i;
-				break;
-			}
-	}
-	return 0;
-}
-
-/* ".pdf" 后缀（不区分大小写），".pdf" 这类隐藏文件不算 */
-static int fm_is_pdf(const char *name)
-{
-	const char *dot = strrchr(name, '.');
-	return dot && dot != name && !strcasecmp(dot, ".pdf");
-}
-
 /* 粗略判断文本文件：前 4KB 无 NUL 字节，且至少九成是可打印字符 */
-static int fm_is_text(const char *path)
+int is_text(const char *path)
 {
 	unsigned char buf[4096];
 	int n, i, good = 0;
@@ -1286,201 +949,55 @@ static int fm_is_text(const char *path)
 	return good * 10 >= n * 9;
 }
 
-static int fm_enter(struct fm_view *v)
+int is_pdf(const char *name)
 {
-	char next[PATH_MAX];
-	int n;
-
-	if (v->n <= 0)
-		return 1;
-	n = snprintf(next, sizeof(next), "%s%s%s", v->path,
-			strcmp(v->path, "/") ? "/" : "", v->ents[v->sel].name);
-	if (n < 0 || n >= (int) sizeof(next))
-		return 1;
-	if (v->ents[v->sel].isdir) {
-		if (fm_chdir(v, next, NULL)) {
-			fprintf(stderr, "cannot open <%s>\n", next);
-			return 1;
-		}
-		return 0;
-	}
-	if (!v->ents[v->sel].isreg)
-		return 1;	/* 设备、管道等不做处理 */
-	if (fm_is_pdf(v->ents[v->sel].name)) {
-		show_pdf(next);	/* 打开失败时 show_pdf 自己会报错 */
-		return 0;
-	}
-	if (!fm_is_text(next))
-		return 1;
-	show_text(next);
-	return 0;		/* 返回后重绘文件列表 */
+	const char *dot = strrchr(name, '.');
+	return dot && dot != name && !strcasecmp(dot, ".pdf");
 }
 
-static int fm_parent(struct fm_view *v)
-{
-	char parent[PATH_MAX];
-	char child[NAME_MAX + 1];
-	char *base;
-
-	if (!strcmp(v->path, "/"))
-		return 1;
-	strncpy(parent, v->path, sizeof(parent) - 1);
-	parent[sizeof(parent) - 1] = 0;
-	base = strrchr(parent, '/');
-	child[0] = 0;
-	if (base) {
-		strncpy(child, base + 1, sizeof(child) - 1);
-		child[sizeof(child) - 1] = 0;
-		if (base == parent)
-			parent[1] = 0;
-		else
-			*base = 0;
-	}
-	if (fm_chdir(v, parent, child)) {
-		fprintf(stderr, "cannot open <%s>\n", parent);
-		return 1;
-	}
-	return 0;
-}
-
-static void fm_draw(struct fm_view *v)
-{
-	int scale = fm_scale();
-	int pad = 6 * scale;
-	int lw = fm_lw(), lh = fm_lh();
-	int line_h = MAX(1, fm_line_height) + 2 * scale;
-	int header_h = MAX(1, fm_line_height) + 2 * pad;
-	int y0 = header_h + pad / 2;
-	int visible = (lh - y0 - pad) / line_h;
-	int x0 = cfg.ui_h;	/* 逆时针旋转后状态栏落在左侧，文字让开 */
-	int i;
-
-	if (visible < 1)
-		visible = 1;
-	if (v->sel < v->top)
-		v->top = v->sel;
-	if (v->sel >= v->top + visible)
-		v->top = v->sel - visible + 1;
-	if (v->top > v->n - visible)
-		v->top = v->n - visible;
-	if (v->top < 0)
-		v->top = 0;
-
-	fm_fill_rect(0, 0, lw, lh, UI_BG, UI_BG, UI_BG);
-	//if (cfg.ui_h)
-	//	fm_fill_rect(0, 0, x0, lh, GRAY, GRAY, GRAY);
-	fm_text(x0 + pad, pad, v->path, UI_ICON, UI_ICON, UI_ICON);
-	fm_fill_rect(x0, header_h, lw - x0, MAX(1, scale), UI_BORDER, UI_BORDER, UI_BORDER);
-
-	if (!v->n) {
-		fm_text(x0 + pad, y0 + scale, "(empty)", UI_BORDER, UI_BORDER, UI_BORDER);
-	} else {
-		for (i = v->top; i < v->n && i < v->top + visible; i++) {
-			const struct fm_entry *e = &v->ents[i];
-			int y = y0 + (i - v->top) * line_h;
-			unsigned fg = (i == v->sel) ? UI_BG : UI_ICON;
-			unsigned bg = (i == v->sel) ? UI_ICON : UI_BG;
-
-			int x;
-			if (i == v->sel)
-				fm_fill_rect(x0, y, lw - x0, line_h, bg, bg, bg);
-			x = fm_text(x0 + pad, y + scale, e->name, fg, fg, fg);
-			if (e->isdir)
-				fm_char(x, y + scale, '/', fg, fg, fg);
-		}
-	}
-}
-
-static int show_filemgr(char *path)
-{
-	struct fm_view v;
-	struct stat st;
-	int c, retval = EXIT_FAILURE;
-
-	if (!path || !path[0])
-		return EXIT_FAILURE;
-	if (stat(path, &st) != 0)
-		return EXIT_FAILURE;
-	if (S_ISREG(st.st_mode))
-		return EXIT_FAILURE;
-
-	memset(&v, 0, sizeof(v));
-	if (fm_font_acquire())
-		return EXIT_FAILURE;
-
-	fm_trim_slash(path);
-	if (fm_chdir(&v, path, NULL)) {
-		fprintf(stderr, "cannot open <%s>\n", path);
-		goto out;
-	}
-	fm_draw(&v);
-	while ((c = readkey()) != -1) {
-		switch (c) {
-		case 'q':
-			if (!fm_parent(&v))
-				fm_draw(&v);
-			break;
-		case 'e':
-			if (!fm_enter(&v))
-				fm_draw(&v);
-			break;
-		case 'j':
-			if (v.sel + 1 < v.n) {
-				v.sel++;
-				fm_draw(&v);
-			}
-			break;
-		case 'k':
-			if (v.sel > 0) {
-				v.sel--;
-				fm_draw(&v);
-			}
-			break;
-		default:
-			continue;
-		}
-	}
-	retval = EXIT_SUCCESS;
-out:
-	free(v.ents);
-	fm_font_release();
-	return retval;
-}
+int show_filemgr(char *path, uint16_t w, uint16_t h);
 
 static void ebook(void) {
 	pthread_t th_ui;
+	struct stat st;
 	char tmp_path[PATH_MAX];
 	if (!realpath(cfg.path, tmp_path))
 		strncpy(tmp_path, "/", 2);
 
-	if (pthread_create(&th_ui, NULL, draw_ui, &cfg.ui_h) != 0) {
-		perror("creating UI thread");
-		return;
-	}
+	if (cfg.ui_h)
+		if (pthread_create(&th_ui, NULL, draw_ui, &cfg.ui_h) != 0) {
+			perror("creating UI thread");
+			return;
+		}
 
 	while (true) {
 		if (!tmp_path[0])
 			strncpy(tmp_path, "/", 2);
-
 		char *base = strrchr(tmp_path, '/');	// 定位文件名
-		base = base ? base + 1 : tmp_path;
-		char *dot = strrchr(base, '.');	// 只在该段内找最后一个点
 
-		if (dot) {	// 有扩展名
-			if (!strncmp(dot + 1, "pdf", 3)) {
-				if (show_pdf(cfg.path) != EXIT_SUCCESS)
-					dot[0] = 0;	// 退回文件所在目录
-				continue;
-			}
+		if (stat(tmp_path, &st) != 0)	// 读不了：不存在或没权限
+			goto _parent;
+		if (S_ISDIR(st.st_mode)) {
+			show_filemgr(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
+			goto _parent;
+		} else if (!S_ISREG(st.st_mode))
+			goto _parent;
+
+		if (is_pdf(base)) {
+			show_pdf(tmp_path);
+			goto _parent;
 		}
-		if (fm_is_text(tmp_path) && show_text(tmp_path) != EXIT_SUCCESS) {
-			base[0] = 0;
-			continue;
-		}
-		if (show_filemgr(tmp_path) != EXIT_SUCCESS)
-			base[0] = 0;
+
+		// TODO: 其他文件格式
+		if (is_text(tmp_path))
+			show_text(tmp_path);
+_parent:
+		base[0] = 0;
 	}
 }
+
+void term_setup(struct termios *term);
+void term_cleanup(struct termios *term);
 
 static void sigcont(int sig)	{term_setup(&cfg.term);}
 

@@ -22,7 +22,7 @@ static int nr, ng, nb;			/* color levels */
 static int rl, rr, gl, gr, bl, br;	/* shifts per color */
 static int xres, yres, xoff, yoff;	/* drawing region */
 
-/* 优先使用等宽字体；也可用环境变量 EREADER_FONT 指定字体文件 */
+/* 优先使用等宽字体，其余作为多语言后备字体；也可用环境变量 EREADER_FONT 指定字体文件 */
 const char *font_paths[] = {
 	"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 	"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
@@ -31,6 +31,11 @@ const char *font_paths[] = {
 	"/usr/share/fonts/truetype/hack/Hack-Regular.ttf",
 	"/usr/share/fonts/truetype/droid/DroidSansMono.ttf",
 	"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+	"/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
 	NULL,
 };
 

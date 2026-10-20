@@ -12,15 +12,19 @@
 #include "draw.h"
 
 #define FM_FONT_PX	12	/* 基准字号（像素），按屏幕缩放倍数放大 */
-#define FM_FIRST	32
-#define FM_LAST		126
+#define FM_MAX_FACES	16	/* 主字体 + 后备字体 */
+#define FM_MAX_GLYPHS	8192	/* 字形缓存上限，超出时整体清空 */
+#define FM_HASH_SIZE	1024
+#define FM_MAX_PX	127
 
 struct fm_glyph {
+	unsigned int cp;	/* Unicode 码点 */
+	int px;			/* 字号（像素） */
 	int w, h;		/* 位图尺寸 */
 	int left, top;		/* 位图相对基线的偏移 */
 	int advance;		/* 步进（像素） */
 	unsigned char *bitmap;	/* 8 位灰度位图，行宽为 w */
-	int loaded;
+	struct fm_glyph *next;
 };
 
 struct fm_entry {
@@ -39,11 +43,13 @@ struct fm_view {
 
 static int fm_font_users;	/* 字体由文件管理器和文本阅读器共用，最后一个使用者退出时才释放 */
 static FT_Library fm_lib;
-static FT_Face fm_face;
-static struct fm_glyph fm_glyphs[FM_LAST - FM_FIRST + 1];
-static int fm_px;	/* 当前字号（像素） */
-static int fm_ascent;	/* 基线到行顶的距离 */
-int fm_line_height;	/* 行高 */
+static FT_Face fm_faces[FM_MAX_FACES];
+static int fm_nfaces;
+static int fm_face_px[FM_MAX_FACES];	/* 各字体当前设置的字号 */
+static struct fm_glyph *fm_hash[FM_HASH_SIZE];
+static int fm_nglyphs;
+static int fm_ascent_px[FM_MAX_PX + 1];	/* 按字号缓存的基线偏移 */
+static int fm_height_px[FM_MAX_PX + 1];	/* 按字号缓存的行高 */
 static uint16_t fm_w, fm_h;
 extern int bpp;
 
@@ -53,105 +59,243 @@ int is_pdf(const char *path);
 int show_pdf(char *path);
 int show_text(char *path, uint16_t w, uint16_t h);
 
-void fm_font_close(void)
+static void fm_glyphs_flush(void)
+{
+	int i;
+	struct fm_glyph *gl, *next;
+
+	for (i = 0; i < FM_HASH_SIZE; i++) {
+		for (gl = fm_hash[i]; gl; gl = next) {
+			next = gl->next;
+			free(gl->bitmap);
+			free(gl);
+		}
+		fm_hash[i] = NULL;
+	}
+	fm_nglyphs = 0;
+}
+
+static void fm_font_close(void)
 {
 	int i;
 
-	for (i = 0; i < FM_LAST - FM_FIRST + 1; i++) {
-		free(fm_glyphs[i].bitmap);
-		memset(&fm_glyphs[i], 0, sizeof(fm_glyphs[i]));
-	}
-	if (fm_face) {
-		FT_Done_Face(fm_face);
-		fm_face = NULL;
-	}
+	fm_glyphs_flush();
+	for (i = 0; i < fm_nfaces; i++)
+		FT_Done_Face(fm_faces[i]);
+	fm_nfaces = 0;
 	if (fm_lib) {
 		FT_Done_FreeType(fm_lib);
 		fm_lib = NULL;
 	}
-	fm_px = 0;
-	fm_ascent = 0;
-	fm_line_height = 0;
+	memset(fm_face_px, 0, sizeof(fm_face_px));
+	memset(fm_ascent_px, 0, sizeof(fm_ascent_px));
+	memset(fm_height_px, 0, sizeof(fm_height_px));
 }
 
-/* 惰性缓存 ASCII 字形，按当前字号渲染一次 */
-struct fm_glyph *fm_glyph_get(unsigned char c)
+static int fm_clamp_px(int px)
 {
-	struct fm_glyph *gl;
+	if (px < 1)
+		return 1;
+	if (px > FM_MAX_PX)
+		return FM_MAX_PX;
+	return px;
+}
+
+/* 切换某个字体的字号；已缓存的其他字号字形不受影响 */
+static int fm_set_px(int face, int px)
+{
+	if (face < 0 || face >= fm_nfaces)
+		return 1;
+	if (fm_face_px[face] == px)
+		return 0;
+	if (FT_Set_Pixel_Sizes(fm_faces[face], 0, px))
+		return 1;
+	fm_face_px[face] = px;
+	return 0;
+}
+
+/* 行高（像素），同时缓存该字号的基线偏移 */
+int fm_line_height(int px)
+{
+	FT_Size_Metrics *m;
+
+	px = fm_clamp_px(px);
+	if (fm_height_px[px])
+		return fm_height_px[px];
+	if (!fm_nfaces || fm_set_px(0, px))
+		return px;
+	m = &fm_faces[0]->size->metrics;
+	fm_ascent_px[px] = (m->ascender + 40) >> 6;
+	fm_height_px[px] = (m->height + 40) >> 6;
+	return fm_height_px[px] ? fm_height_px[px] : px;
+}
+
+static int fm_ascent(int px)
+{
+	px = fm_clamp_px(px);
+	fm_line_height(px);
+	return fm_ascent_px[px];
+}
+
+/* 依次尝试主字体和后备字体，把 cp 渲染到 gl 中；返回 0 表示成功 */
+static int fm_load_glyph(struct fm_glyph *gl, unsigned int cp, int px)
+{
 	FT_GlyphSlot slot;
 	FT_Bitmap *bm;
-	int row;
+	int i, row;
 
-	if (c < FM_FIRST || c > FM_LAST)
-		c = '?';
-	gl = &fm_glyphs[c - FM_FIRST];
-	if (gl->loaded)
-		return gl;
-	gl->loaded = 1;
-	if (!fm_face || FT_Load_Char(fm_face, c, FT_LOAD_RENDER))
-		return gl;
-	slot = fm_face->glyph;
-	bm = &slot->bitmap;
-	gl->w = (int) bm->width;
-	gl->h = (int) bm->rows;
-	gl->left = slot->bitmap_left;
-	gl->top = slot->bitmap_top;
-	gl->advance = (slot->advance.x + 32) >> 6;
-	if (!gl->w || !gl->h)
-		return gl;
-	gl->bitmap = malloc((size_t) gl->w * gl->h);
-	if (!gl->bitmap) {
-		gl->w = 0;
-		gl->h = 0;
-		return gl;
+	for (i = 0; i < fm_nfaces; i++) {
+		if (!FT_Get_Char_Index(fm_faces[i], cp))
+			continue;	/* 该字体没有此字符 */
+		if (fm_set_px(i, px) || FT_Load_Char(fm_faces[i], cp, FT_LOAD_RENDER))
+			continue;
+		slot = fm_faces[i]->glyph;
+		bm = &slot->bitmap;
+		gl->w = (int) bm->width;
+		gl->h = (int) bm->rows;
+		gl->left = slot->bitmap_left;
+		gl->top = slot->bitmap_top;
+		gl->advance = (slot->advance.x + 32) >> 6;
+		if (!gl->w || !gl->h)
+			return 0;
+		gl->bitmap = malloc((size_t) gl->w * gl->h);
+		if (!gl->bitmap) {
+			gl->w = 0;
+			gl->h = 0;
+			return 0;
+		}
+		for (row = 0; row < gl->h; row++) {
+			long off = bm->pitch >= 0 ? (long) row * bm->pitch
+				: (long) (gl->h - 1 - row) * -bm->pitch;
+			memcpy(gl->bitmap + (size_t) row * gl->w, bm->buffer + off, gl->w);
+		}
+		return 0;
 	}
-	for (row = 0; row < gl->h; row++) {
-		long off = bm->pitch >= 0 ? (long) row * bm->pitch
-			: (long) (gl->h - 1 - row) * -bm->pitch;
-		memcpy(gl->bitmap + (size_t) row * gl->w, bm->buffer + off, gl->w);
-	}
+	return 1;
+}
+
+static struct fm_glyph *fm_glyph_make(unsigned int cp, int px)
+{
+	struct fm_glyph *gl = calloc(1, sizeof(*gl));
+
+	if (!gl)
+		return NULL;
+	gl->cp = cp;
+	gl->px = px;
+	if (fm_load_glyph(gl, cp, px) && cp != '?')
+		fm_load_glyph(gl, '?', px);	/* 未收录的字符显示为 '?' */
+	if (gl->advance <= 0)
+		gl->advance = px > 1 ? px / 2 : 1;
 	return gl;
 }
 
-/* 单个字符的步进（越界字符按 '?' 处理） */
-int fm_advance(unsigned char c)
+/* 按 (码点, 字号) 惰性缓存字形 */
+static struct fm_glyph *fm_glyph_get(unsigned int cp, int px)
 {
-	int adv = fm_glyph_get(c)->advance;
-	return adv > 0 ? adv : 1;
+	unsigned int h;
+	struct fm_glyph *gl;
+
+	px = fm_clamp_px(px);
+	h = (cp * 31u + (unsigned int) px) & (FM_HASH_SIZE - 1);
+	for (gl = fm_hash[h]; gl; gl = gl->next)
+		if (gl->cp == cp && gl->px == px)
+			return gl;
+	if (fm_nglyphs >= FM_MAX_GLYPHS)
+		fm_glyphs_flush();
+	gl = fm_glyph_make(cp, px);
+	if (!gl)
+		return NULL;
+	gl->next = fm_hash[h];
+	fm_hash[h] = gl;
+	fm_nglyphs++;
+	return gl;
+}
+
+/* 解码一个 UTF-8 码点并前移指针，非法序列按 '?' 处理 */
+unsigned int fm_utf8(const char **sp)
+{
+	const unsigned char *s = (const unsigned char *) *sp;
+	unsigned int cp, min;
+	int n, i;
+
+	if (s[0] < 0x80) {
+		*sp += 1;
+		return s[0];
+	}
+	if ((s[0] & 0xe0) == 0xc0) {
+		cp = s[0] & 0x1f;
+		n = 1;
+		min = 0x80;
+	} else if ((s[0] & 0xf0) == 0xe0) {
+		cp = s[0] & 0x0f;
+		n = 2;
+		min = 0x800;
+	} else if ((s[0] & 0xf8) == 0xf0) {
+		cp = s[0] & 0x07;
+		n = 3;
+		min = 0x10000;
+	} else {
+		*sp += 1;
+		return '?';
+	}
+	for (i = 1; i <= n; i++) {
+		if ((s[i] & 0xc0) != 0x80) {
+			*sp += 1;
+			return '?';
+		}
+		cp = (cp << 6) | (s[i] & 0x3f);
+	}
+	if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+		*sp += 1;
+		return '?';
+	}
+	*sp += n + 1;
+	return cp;
+}
+
+/* 单个字符的步进（越界字符按 '?' 处理） */
+int fm_advance(unsigned int cp, int px)
+{
+	struct fm_glyph *gl = fm_glyph_get(cp, px);
+
+	return gl && gl->advance > 0 ? gl->advance : 1;
+}
+
+static int fm_load_face(const char *path)
+{
+	FT_Face face;
+
+	if (fm_nfaces >= FM_MAX_FACES)
+		return 1;
+	if (FT_New_Face(fm_lib, path, 0, &face))
+		return 1;
+	FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+	fm_faces[fm_nfaces] = face;
+	fm_face_px[fm_nfaces] = 0;
+	fm_nfaces++;
+	return 0;
 }
 
 int fm_font_load(void)
 {
-	const char *env, *path = NULL;
-	int px = FM_FONT_PX * FBM_FONT_SCALE;
-	int i;
+	const char *env;
+	int i, n = 0;
 
-	if (fm_face && px == fm_px)
+	if (fm_nfaces)
 		return 0;
-	fm_font_close();
 	if (FT_Init_FreeType(&fm_lib))
 		return 1;
-	fm_face = NULL;
 	env = getenv("EREADER_FONT");
-	if (env && env[0]) {
-		if (!FT_New_Face(fm_lib, env, 0, &fm_face))
-			path = env;
-	} else {
-		for (i = 0; font_paths[i]; i++)
-			if (!FT_New_Face(fm_lib, font_paths[i], 0, &fm_face)) {
-				path = font_paths[i];
-				break;
-			}
-	}
-	if (!path || !fm_face ||
-			FT_Set_Pixel_Sizes(fm_face, 0, px)) {
+	if (env && env[0] && !fm_load_face(env))
+		n++;
+	for (i = 0; font_paths[i]; i++)
+		if (!fm_load_face(font_paths[i]))
+			n++;
+	if (!n) {
 		fprintf(stderr, "cannot load font\n");
 		fm_font_close();
 		return 1;
 	}
-	fm_px = px;
-	fm_ascent = (fm_face->size->metrics.ascender + 40) >> 6;
-	fm_line_height = (fm_face->size->metrics.height + 40) >> 6;
 	return 0;
 }
 
@@ -190,34 +334,38 @@ static void fm_blend_px(int x, int y, int a, unsigned r, unsigned g, unsigned b)
 }
 
 /* y 为文字行顶部，返回绘制后的横向位置 */
-int fm_char(int x, int y, unsigned char c, unsigned r, unsigned g, unsigned b)
+int fm_char(int x, int y, unsigned int cp, int px, unsigned r, unsigned g, unsigned b)
 {
-	struct fm_glyph *gl = fm_glyph_get(c);
-	int bx = x + gl->left;
-	int by = y + fm_ascent - gl->top;
-	int row, col;
+	struct fm_glyph *gl = fm_glyph_get(cp, px);
+	int bx, by, row, col;
 
+	if (!gl)
+		return 1;
+	bx = x + gl->left;
+	by = y + fm_ascent(px) - gl->top;
 	for (row = 0; gl->bitmap && row < gl->h; row++) {
 		const unsigned char *src = gl->bitmap + (size_t) row * gl->w;
 		for (col = 0; col < gl->w; col++)
 			if (src[col])
 				fm_blend_px(bx + col, by + row, src[col], r, g, b);
 	}
-	return gl->advance;
+	return gl->advance > 0 ? gl->advance : 1;
 }
 
-int fm_text(int x, int y, const char *s, unsigned r, unsigned g, unsigned b)
+/* 绘制 len 字节的 UTF-8 文本 */
+int fm_text_n(int x, int y, const char *s, size_t len, int px, unsigned r, unsigned g, unsigned b)
 {
-	while (*s) {
-		unsigned char c = (unsigned char) *s++;
-		if (c >= 0x80) {
-			while (((unsigned char) *s & 0xc0) == 0x80)
-				s++;
-			c = '?';
-		}
-		x += fm_char(x, y, c, r, g, b);
+	const char *p = s, *end = s + len;
+	while (p < end && *p) {
+		unsigned int cp = fm_utf8(&p);
+		x += fm_char(x, y, cp, px, r, g, b);
 	}
 	return x;
+}
+
+int fm_text(int x, int y, const char *s, int px, unsigned r, unsigned g, unsigned b)
+{
+	return fm_text_n(x, y, s, strlen(s), px, r, g, b);
 }
 
 static void fm_trim_slash(char *path)
@@ -372,9 +520,10 @@ static int fm_parent(struct fm_view *v)
 
 static void fm_draw(struct fm_view *v)
 {
+	int px = FM_FONT_PX * FBM_FONT_SCALE;
 	int pad = 4 * FBM_FONT_SCALE;
-	int line_h = fm_line_height + 2 * FBM_FONT_SCALE;
-	int header_h = fm_line_height + 8 * FBM_FONT_SCALE;
+	int line_h = fm_line_height(px) + 2 * FBM_FONT_SCALE;
+	int header_h = fm_line_height(px) + 8 * FBM_FONT_SCALE;
 	int y0 = header_h + pad / 2;
 	int visible = (fm_h - y0 - pad) / line_h;	// 可显示条目数
 
@@ -390,11 +539,11 @@ static void fm_draw(struct fm_view *v)
 		v->top = 0;
 
 	fill_rect(0, 0, fm_h, fm_w, UI_BG, UI_BG, UI_BG);	// 填充背景
-	fm_text(pad, pad, v->path, UI_ICON, UI_ICON, UI_ICON);	// 地址栏
+	fm_text(pad, pad, v->path, px, UI_ICON, UI_ICON, UI_ICON);	// 地址栏
 	fill_rect(header_h, 0, FBM_FONT_SCALE, fm_w, UI_BORDER, UI_BORDER, UI_BORDER);	// 分隔线
 
 	if (!v->n) {
-		fm_text(pad, header_h + FBM_FONT_SCALE, "(empty)", UI_BORDER, UI_BORDER, UI_BORDER);
+		fm_text(pad, header_h + FBM_FONT_SCALE, "(empty)", px, UI_BORDER, UI_BORDER, UI_BORDER);
 		return;
 	}
 	for (int i = v->top; i < v->n && i < v->top + visible; i++) {
@@ -405,9 +554,9 @@ static void fm_draw(struct fm_view *v)
 
 		if (i == v->sel)
 			fill_rect(y, 0, line_h, fm_w, bg, bg, bg);
-		int x = fm_text(pad, y + FBM_FONT_SCALE, e->name, fg, fg, fg);
+		int x = fm_text(pad, y + FBM_FONT_SCALE, e->name, px, fg, fg, fg);
 		if (e->isdir)
-			fm_char(x, y + FBM_FONT_SCALE, '/', fg, fg, fg);
+			fm_text(x, y + FBM_FONT_SCALE, "/", px, fg, fg, fg);
 	}
 }
 

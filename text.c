@@ -7,7 +7,9 @@
 
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
 #define TX_MAX_LINES	(1 << 20)	/* 折行后的显示行上限 */
-#define TX_TAB		8		/* tab 展开后的列数 */
+#define TX_TAB		4		/* tab 展开后的列数 */
+#define TX_FONT_PX	8		/* 基准字号（像素），按屏幕缩放倍数放大 */
+#define TX_PX		(TX_FONT_PX * FBM_FONT_SCALE)
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
 
@@ -26,15 +28,9 @@ struct tx_view {
 
 static uint16_t tx_w, tx_h;
 
-int fm_font_acquire(void);
-int fm_font_release(void);
-int fm_advance(unsigned char c);
-int fm_char(int x, int y, unsigned char c, unsigned r, unsigned g, unsigned b);
-
-extern int fm_line_height;
 static int tx_line_h(void)
 {
-	return MAX(1, fm_line_height) + 2 * FBM_FONT_SCALE;
+	return MAX(1, fm_line_height(TX_PX)) + 2 * FBM_FONT_SCALE;
 }
 
 static int tx_visible(void)
@@ -64,16 +60,21 @@ static int tx_push(struct tx_view *v, int *cap, size_t off, size_t len)
 /* 返回 s 前 len 字节中能放进 avail 像素宽度的字节数（优先在空格后断开） */
 static size_t tx_fit(const char *s, size_t len, int avail)
 {
-	size_t i, last = 0;
+	size_t pos = 0, last = 0;
 	int w = 0;
 
-	for (i = 0; i < len; i++) {
-		int cw = fm_advance((unsigned char) s[i]);
-		if (i > 0 && w + cw > avail)
-			return last ? last : i;
+	while (pos < len) {
+		const char *p = s + pos;
+		unsigned int cp = fm_utf8(&p);
+		size_t n = (size_t) (p - (s + pos));
+		int cw = fm_advance(cp, TX_PX);
+
+		if (pos > 0 && w + cw > avail)
+			return last ? last : pos;
 		w += cw;
-		if (s[i] == ' ')
-			last = i + 1;
+		if (cp == ' ')
+			last = pos + n;
+		pos += n;
 	}
 	return len;
 }
@@ -109,13 +110,13 @@ static int tx_format(struct tx_view *v, int avail)
 	return 0;
 }
 
-/* 载入文本：展开 tab，UTF-8 与控制字符换成可显示的单字节 */
+/* 载入文本：展开 tab、过滤控制字符，保留合法的 UTF-8 序列 */
 // TODO: 读不了 /proc 下大小为零的文件
 static char *tx_load(const char *path, size_t *size)
 {
 	FILE *fp;
 	char *in, *out;
-	size_t len, n = 0, i, tabs = 0;
+	size_t len, n = 0, i, tabs = 0, col = 0;
 	long sz;
 
 	fp = fopen(path, "r");
@@ -149,23 +150,39 @@ static char *tx_load(const char *path, size_t *size)
 	for (i = 0; i < len; i++) {
 		unsigned char c = (unsigned char) in[i];
 		if (c == '\t') {
-			size_t stop = (n / TX_TAB + 1) * TX_TAB;
-			while (n < stop)
+			size_t stop = (col / TX_TAB + 1) * TX_TAB;
+			while (col < stop) {
 				out[n++] = ' ';
+				col++;
+			}
 		} else if (c == '\r') {
 			if (i + 1 < len && in[i + 1] == '\n')
 				continue;	/* CRLF 只保留 LF */
 			out[n++] = '\n';
-		} else if (c >= 0x80) {
-			while (i + 1 < len && ((unsigned char) in[i + 1] & 0xc0) == 0x80)
-				i++;
-			out[n++] = '?';
-		} else if (c < 0x20 && c != '\n') {
+			col = 0;
+		} else if (c == '\n') {
+			out[n++] = '\n';
+			col = 0;
+		} else if (c < 0x20 || c == 0x7f) {
 			out[n++] = ' ';
-		} else if (c == 0x7f) {
-			out[n++] = ' ';
-		} else {
+			col++;
+		} else if (c < 0x80) {
 			out[n++] = (char) c;
+			col++;
+		} else {
+			const char *p = in + i;
+			unsigned int cp = fm_utf8(&p);
+			size_t nb = (size_t) (p - (in + i));
+
+			if (nb > 1) {
+				memcpy(out + n, in + i, nb);
+				n += nb;
+				i += nb - 1;
+				col += cp >= 0x1100 ? 2 : 1;	/* 宽字符按两列计 */
+			} else {
+				out[n++] = '?';	/* 非法 UTF-8 字节 */
+				col++;
+			}
 		}
 	}
 	out[n] = 0;
@@ -174,12 +191,10 @@ static char *tx_load(const char *path, size_t *size)
 	return out;
 }
 
-/* 绘制 len 字节的文本（调用前已清理为 ASCII），返回绘制后的横向位置 */
+/* 绘制 len 字节的文本（UTF-8），返回绘制后的横向位置 */
 static int tx_text(int x, int y, const char *s, size_t len, unsigned r, unsigned g, unsigned b)
 {
-	for (size_t i = 0; i < len; i++)
-		x += fm_char(x, y, (unsigned char) s[i], r, g, b);
-	return x;
+	return fm_text_n(x, y, s, len, TX_PX, r, g, b);
 }
 
 static void tx_draw(struct tx_view *v)

@@ -14,9 +14,6 @@
 #define FM_FONT_PX	12	/* 基准字号（像素），按屏幕缩放倍数放大 */
 #define FM_FIRST	32
 #define FM_LAST		126
-#define UI_BG		235	/* 按钮/纸张填充色 */
-#define UI_BORDER	90	/* 按钮/电池边框色 */
-#define UI_ICON		45	/* 图标/文字颜色 */
 
 struct fm_glyph {
 	int w, h;		/* 位图尺寸 */
@@ -54,15 +51,7 @@ void px(int x, int y, unsigned r, unsigned g, unsigned b);
 int is_text(const char *path);
 int is_pdf(const char *path);
 int show_pdf(char *path);
-int show_text(char *path);
-
-static int readkey(void)
-{
-	unsigned char b;
-	if (read(0, &b, 1) <= 0)
-		return -1;
-	return b;
-}
+int show_text(char *path, uint16_t w, uint16_t h);
 
 void fm_font_close(void)
 {
@@ -350,7 +339,7 @@ static int fm_enter(struct fm_view *v)
 	}
 	if (!is_text(next))
 		return 1;
-	show_text(next);
+	show_text(next, fm_w, fm_h);
 	return 0;		/* 返回后重绘文件列表 */
 }
 

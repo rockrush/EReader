@@ -30,6 +30,7 @@ const char *font_paths[] = {
 	"/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
 	"/usr/share/fonts/truetype/hack/Hack-Regular.ttf",
 	"/usr/share/fonts/truetype/droid/DroidSansMono.ttf",
+	"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 	NULL,
 };
 
@@ -182,4 +183,10 @@ void term_setup(struct termios *term) {
 void term_cleanup(struct termios *term) {
 	tcsetattr(0, 0, term);
 	printf("\x1b[?25h\n");	/* show the cursor */
+}
+
+int readkey(void)
+{
+	unsigned char b;
+	return (read(0, &b, 1) <= 0) ? -1 : b;
 }

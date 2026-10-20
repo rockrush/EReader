@@ -9,7 +9,7 @@ all: $(TARGETS)
 	$(CC) -c $(CFLAGS) $<
 
 # PDF support using poppler
-ereader: ereader.o poppler.c draw.o filemgr.o
+ereader: ereader.o poppler.c draw.o filemgr.o text.o
 	$(CXX) $(CFLAGS) -o $@ $^ $(shell pkg-config --cflags --libs poppler-cpp) $(shell pkg-config --libs libfyaml) $(LDLIBS)
 
 .PHONY: clean count

@@ -7,8 +7,8 @@
 #include <dirent.h>
 #include <libfyaml.h>
 #include <sys/stat.h>
-#include <pthread.h>
 #include <math.h>
+#include <pthread.h>
 #include <termios.h>
 
 #include "draw.h"
@@ -21,9 +21,6 @@
 #define MARGIN		1
 #define GRAY		128	/* 屏幕空白处的灰色填充 */
 #define TRIM_MARGIN	8	/* 去白边后内容四周保留的边距（像素） */
-#define UI_BG		235	/* 按钮/纸张填充色 */
-#define UI_BORDER	90	/* 按钮/电池边框色 */
-#define UI_ICON		45	/* 图标/文字颜色 */
 
 struct ereader_cfg {
 	uint16_t scr_w;
@@ -49,6 +46,11 @@ static int prow, pcol;		/* page position */
 static int srow, scol;		/* screen position */
 int bpp;			/* bytes per pixel */
 static int count;
+
+void term_setup(struct termios *term);
+void term_cleanup(struct termios *term);
+int show_text(const char *path, uint16_t w, uint16_t h);
+int show_filemgr(char *path, uint16_t w, uint16_t h);
 
 /* 在屏幕坐标设置一个像素（越界自动忽略） */
 void px(int x, int y, unsigned r, unsigned g, unsigned b)
@@ -388,8 +390,7 @@ static void fitpage(int p)
 }
 
 /* 检测页面内容（非纯白像素）的包围盒，返回是否找到内容 */
-static int content_bbox(char *buf, int rows, int cols, int bpp,
-		int *x0, int *y0, int *x1, int *y1)
+static int content_bbox(char *buf, int rows, int cols, int bpp, int *x0, int *y0, int *x1, int *y1)
 {
 	unsigned char white[4];
 	int x, y;
@@ -590,14 +591,6 @@ static int loadpage(int p)
 	return 0;
 }
 
-static int readkey(void)
-{
-	unsigned char b;
-	if (read(0, &b, 1) <= 0)
-		return -1;
-	return b;
-}
-
 static int getcount(int def)
 {
 	int result = count ? count : def;
@@ -689,241 +682,6 @@ fail_file:
 	return retval;
 }
 
-/* 文件管理器界面逆时针旋转 90 度：逻辑宽高与屏幕宽高互换 */
-int fm_lw(void)	{return cfg.scr_h - cfg.ui_h;}
-int fm_lh(void)	{return cfg.scr_w;}
-
-int fm_font_acquire(void);
-int fm_font_release(void);
-int fm_advance(unsigned char c);
-int fm_char(int x, int y, unsigned char c, unsigned r, unsigned g, unsigned b);
-
-#define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
-#define TX_MAX_LINES	(1 << 20)	/* 折行后的显示行上限 */
-#define TX_TAB		8		/* tab 展开后的列数 */
-
-struct tx_line {
-	size_t off;		/* 在文本缓冲区中的偏移 */
-	size_t len;		/* 字节长度（不含换行） */
-};
-
-struct tx_view {
-	char *text;
-	size_t size;
-	struct tx_line *lines;	/* 折行后的显示行 */
-	int n;
-	int top;		/* 顶部显示行号 */
-};
-
-/* 载入文本：展开 tab，UTF-8 与控制字符换成可显示的单字节 */
-// TODO: 读不了 /proc 下大小为零的文件
-static char *tx_load(const char *path, size_t *size)
-{
-	FILE *fp;
-	char *in, *out;
-	size_t len, n = 0, i, tabs = 0;
-	long sz;
-
-	fp = fopen(path, "r");
-	if (!fp)
-		return NULL;
-	if (fseek(fp, 0, SEEK_END) || (sz = ftell(fp)) < 0 || fseek(fp, 0, SEEK_SET)) {
-		fclose(fp);
-		return NULL;
-	}
-	len = (size_t) sz > TX_MAX_SIZE ? TX_MAX_SIZE : (size_t) sz;
-	if ((size_t) sz > len)
-		fprintf(stderr, "%s: only the first %d MB are shown\n", path,
-			TX_MAX_SIZE >> 20);
-	in = malloc(len + 1);
-	if (!in) {
-		fclose(fp);
-		return NULL;
-	}
-	len = fread(in, 1, len, fp);
-	fclose(fp);
-	in[len] = 0;
-
-	for (i = 0; i < len; i++)
-		if (in[i] == '\t')
-			tabs++;
-	out = malloc(len + tabs * (TX_TAB - 1) + 1);
-	if (!out) {
-		free(in);
-		return NULL;
-	}
-	for (i = 0; i < len; i++) {
-		unsigned char c = (unsigned char) in[i];
-		if (c == '\t') {
-			size_t stop = (n / TX_TAB + 1) * TX_TAB;
-			while (n < stop)
-				out[n++] = ' ';
-		} else if (c == '\r') {
-			if (i + 1 < len && in[i + 1] == '\n')
-				continue;	/* CRLF 只保留 LF */
-			out[n++] = '\n';
-		} else if (c >= 0x80) {
-			while (i + 1 < len && ((unsigned char) in[i + 1] & 0xc0) == 0x80)
-				i++;
-			out[n++] = '?';
-		} else if (c < 0x20 && c != '\n') {
-			out[n++] = ' ';
-		} else if (c == 0x7f) {
-			out[n++] = ' ';
-		} else {
-			out[n++] = (char) c;
-		}
-	}
-	out[n] = 0;
-	free(in);
-	*size = n;
-	return out;
-}
-
-static int tx_push(struct tx_view *v, int *cap, size_t off, size_t len)
-{
-	if (v->n == *cap) {
-		int ncap = *cap ? *cap * 2 : 256;
-		struct tx_line *tmp = realloc(v->lines,
-			(size_t) ncap * sizeof(*tmp));
-
-		if (!tmp)
-			return 1;
-		v->lines = tmp;
-		*cap = ncap;
-	}
-	v->lines[v->n].off = off;
-	v->lines[v->n].len = len;
-	v->n++;
-	return 0;
-}
-
-/* 返回 s 前 len 字节中能放进 avail 像素宽度的字节数（优先在空格后断开） */
-static size_t tx_fit(const char *s, size_t len, int avail)
-{
-	size_t i, last = 0;
-	int w = 0;
-
-	for (i = 0; i < len; i++) {
-		int cw = fm_advance((unsigned char) s[i]);
-		if (i > 0 && w + cw > avail)
-			return last ? last : i;
-		w += cw;
-		if (s[i] == ' ')
-			last = i + 1;
-	}
-	return len;
-}
-
-/* 把文本按可用宽度切成显示行 */
-static int tx_format(struct tx_view *v, int avail)
-{
-	size_t pos = 0;
-	int cap = 0;
-
-	if (avail < 1)
-		avail = 1;
-	while (pos <= v->size && v->n < TX_MAX_LINES) {
-		size_t end = pos;
-
-		while (end < v->size && v->text[end] != '\n')
-			end++;
-		if (end == pos && tx_push(v, &cap, pos, 0))
-			return 1;
-		while (pos < end && v->n < TX_MAX_LINES) {
-			size_t len = tx_fit(v->text + pos, end - pos, avail);
-
-			if (len < 1)
-				len = 1;
-			if (tx_push(v, &cap, pos, len))
-				return 1;
-			pos += len;
-		}
-		if (end >= v->size)
-			break;
-		pos = end + 1;
-	}
-	return 0;
-}
-
-/* 绘制 len 字节的文本（调用前已清理为 ASCII），返回绘制后的横向位置 */
-static int tx_text(int x, int y, const char *s, size_t len, unsigned r, unsigned g, unsigned b)
-{
-	for (size_t i = 0; i < len; i++)
-		x += fm_char(x, y, (unsigned char) s[i], r, g, b);
-	return x;
-}
-
-extern int fm_line_height;
-static int tx_line_h(void)
-{
-	return MAX(1, fm_line_height) + 2 * FBM_FONT_SCALE;
-}
-
-static int tx_visible(void)
-{
-	int visible = (fm_lh() - 12 * FBM_FONT_SCALE) / tx_line_h();
-	return MAX(1, visible);
-}
-
-static void tx_draw(struct tx_view *v)
-{
-	int pad = 6 * FBM_FONT_SCALE;
-	int line_h = tx_line_h();
-	int visible = tx_visible();
-
-	fill_rect(0, 0, fm_lh(), fm_lw(), 255, 255, 255);
-	for (int i = 0; i < visible && v->top + i < v->n; i++) {
-		const struct tx_line *ln = &v->lines[v->top + i];
-		tx_text(pad, pad + i * line_h, v->text + ln->off, ln->len, UI_ICON, UI_ICON, UI_ICON);
-	}
-}
-
-/* 文本阅读器：j/k 上下翻半屏，q 退出 */
-int show_text(const char *path)
-{
-	struct tx_view v;
-	int c, step, visible, maxtop, retval = EXIT_FAILURE;
-
-	memset(&v, 0, sizeof(v));
-	if (fm_font_acquire())
-		return EXIT_FAILURE;
-	v.text = tx_load(path, &v.size);
-	if (!v.text) {
-		fprintf(stderr, "cannot open <%s>\n", path);
-		goto out;
-	}
-	if (tx_format(&v, fm_lw() - 12 * FBM_FONT_SCALE))
-		goto out;
-	visible = tx_visible();
-	maxtop = MAX(0, v.n - visible);
-	tx_draw(&v);
-	while ((c = readkey()) != -1) {
-		switch (c) {
-		case 'q':	// 退出
-			retval = EXIT_SUCCESS;
-			goto out;
-		case 'j':	// 向下翻半屏
-			step = MAX(1, visible / 2);
-			v.top = MIN(maxtop, v.top + step);
-			break;
-		case 'k':	// 向上翻半屏
-			step = MAX(1, visible / 2);
-			v.top = MAX(0, v.top - step);
-			break;
-		default:
-			continue;
-		}
-		tx_draw(&v);
-	}
-	retval = EXIT_SUCCESS;
-out:
-	free(v.lines);
-	free(v.text);
-	fm_font_release();
-	return retval;
-}
-
 /* 粗略判断文本文件：前 4KB 无 NUL 字节，且至少九成是可打印字符 */
 int is_text(const char *path)
 {
@@ -954,8 +712,6 @@ int is_pdf(const char *name)
 	const char *dot = strrchr(name, '.');
 	return dot && dot != name && !strcasecmp(dot, ".pdf");
 }
-
-int show_filemgr(char *path, uint16_t w, uint16_t h);
 
 static void ebook(void) {
 	pthread_t th_ui;
@@ -989,15 +745,13 @@ static void ebook(void) {
 		}
 
 		// TODO: 其他文件格式
+
 		if (is_text(tmp_path))
-			show_text(tmp_path);
+			show_text(tmp_path, cfg.scr_h - cfg.ui_h, cfg.scr_w);
 _parent:
 		base[0] = 0;
 	}
 }
-
-void term_setup(struct termios *term);
-void term_cleanup(struct termios *term);
 
 static void sigcont(int sig)	{term_setup(&cfg.term);}
 

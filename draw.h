@@ -3,6 +3,9 @@
 #define FBM_CLR(m)	((m) & 0x0fff)		/* bits per color (12 bits) */
 #define FBM_ORD(m)	(((m) >> 20) & 0x07)	/* color order (3 bits) */
 #define	FBM_FONT_SCALE	3
+#define UI_BG		235	/* 按钮/纸张填充色 */
+#define UI_BORDER	90	/* 按钮/电池边框色 */
+#define UI_ICON		45	/* 图标/文字颜色 */
 
 extern const char *font_paths[];
 
@@ -16,3 +19,4 @@ void fb_cmap(void);
 unsigned fb_val(int r, int g, int b);
 void fb_get(char *d, unsigned *r, unsigned *g, unsigned *b);
 void fill_rect(int x, int y, int w, int h, unsigned r, unsigned g, unsigned b);
+int readkey(void);

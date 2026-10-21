@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <dirent.h>
 
 #include "ereader.h"
@@ -72,6 +73,47 @@ static void fill_round_rect(int x, int y, int w, int h, int rad, unsigned r, uns
 	fill_circle(x + w - 1 - rad, y + rad, rad, r, g, b);
 	fill_circle(x + rad, y + h - 1 - rad, rad, r, g, b);
 	fill_circle(x + w - 1 - rad, y + h - 1 - rad, rad, r, g, b);
+}
+
+/* 点是否落在圆角矩形内（rad 为圆角半径） */
+static int in_round_rect(int x, int y, int rx, int ry, int w, int h, int rad)
+{
+	int dx = 0, dy = 0;
+
+	if (x < rx + rad)
+		dx = rx + rad - x;
+	else if (x > rx + w - 1 - rad)
+		dx = x - (rx + w - 1 - rad);
+	if (y < ry + rad)
+		dy = ry + rad - y;
+	else if (y > ry + h - 1 - rad)
+		dy = y - (ry + h - 1 - rad);
+	return dx * dx + dy * dy <= rad * rad;
+}
+
+/* 圆角矩形边框：只画 thick 像素宽的边框，不覆盖框内已有内容 */
+static void fill_round_frame(int x, int y, int w, int h, int rad, int thick,
+			     unsigned r, unsigned g, unsigned b)
+{
+	int i, j;
+
+	if (thick < 1)
+		thick = 1;
+	if (w < 2 * rad)
+		rad = w / 2;
+	if (h < 2 * rad)
+		rad = h / 2;
+	if (rad < 1)
+		rad = 1;
+	if (w <= 2 * thick || h <= 2 * thick)
+		return;
+	for (i = y; i < y + h; i++)
+		for (j = x; j < x + w; j++)
+			if (in_round_rect(j, i, x, y, w, h, rad) &&
+			    !in_round_rect(j, i, x + thick, y + thick,
+					   w - 2 * thick, h - 2 * thick,
+					   MAX(1, rad - thick)))
+				px(j, i, r, g, b);
 }
 
 /* 画粗线（Bresenham，每点画一个小方块） */
@@ -162,21 +204,28 @@ static void draw_power(int cx, int cy, int h)
 	draw_thick_line(cx - r, cy, cx + h / 8, cy, h / 10, UI_ICON);
 }
 
-/* WiFi 图标：cy 为底部实心点位置，弧线朝上；connected 为 0 时只画断点 */
-static void draw_wifi(int cx, int cy, int rad, int8_t level)
+/* WiFi 徽标：以 (cx, cy) 为中心画边长为 size 的圆角正方形黑框，
+ * 框内为 WiFi 图标；level 为负数时只留空框 */
+static void draw_wifi(int cx, int cy, int size, int8_t level)
 {
-	int k, r, thick = MAX(1, rad / 10);
+	int thick = MAX(1, size / 24);		/* 边框与弧线线宽 */
+	int rad = size * 2 / 5;			/* 图标半径：框内留出边距 */
+	int top = rad + thick;			/* 弧顶到图标底部实心点的距离 */
+	int dot = cy + (top - thick) / 2;	/* 让图标在正方形框内垂直居中 */
+	int k, r;
 
+	fill_round_frame(cx - size / 2, cy - size / 2, size, size,
+			 MAX(2, size / 6), thick, 0, 0, 0);
 	if (level < 0)
-		return;	// 无信号，不画图标
-	fill_circle(cx, cy, thick, UI_ICON, UI_ICON, UI_ICON);
+		return;	// 无信号，只留空框
+	fill_circle(cx, dot, thick, UI_ICON, UI_ICON, UI_ICON);
 	for (k = 1; k <= 3; k++) {
 		float a;
 		unsigned col = (level >= k) ? UI_ICON : UI_ICON / 2;
 		r = rad * k / 3;
 		for (a = 0.6f; a <= M_PI - 0.6f; a += 0.05f) {
 			int x = cx + (int) (r * cosf(a));
-			int y = cy - (int) (r * sinf(a));
+			int y = dot - (int) (r * sinf(a));
 			fill_circle(x, y, thick, col, col, col);
 		}
 	}
@@ -269,6 +318,45 @@ static int8_t wifi_level(void) {
 		return 3;
 }
 
+/* 竖排时间的方格边长与列间距；返回整体宽度，状态栏太矮时返回 0 */
+static int time_geom(int height, int *cell_out, int *gap_out)
+{
+	int cell = height / 5;	/* 最长一列 5 个字符（月-日、时:分） */
+
+	if (cell < 6)
+		return 0;
+	*cell_out = cell;
+	*gap_out = MAX(1, cell / 4);
+	return 3 * cell + 2 * *gap_out;
+}
+
+/* 状态栏时间：年 / 月-日 / 时:分 三列竖排，字符逆时针旋转 90°（自底向上书写）。
+ * 整体右对齐到 right，返回占用宽度（放不下时为 0） */
+static int draw_time(int right, int top, int height)
+{
+	char cols[3][16];
+	time_t now = time(NULL);
+	struct tm tm;
+	int i, n, cell, gap, x, w, y0;
+
+	w = time_geom(height, &cell, &gap);
+	if (!w || !localtime_r(&now, &tm))
+		return 0;
+	snprintf(cols[0], sizeof(cols[0]), "%04d", tm.tm_year + 1900);
+	snprintf(cols[1], sizeof(cols[1]), "%02d-%02d", tm.tm_mon + 1, tm.tm_mday);
+	snprintf(cols[2], sizeof(cols[2]), "%02d:%02d", tm.tm_hour, tm.tm_min);
+	x = right - w;
+	for (i = 0; i < 3; i++) {
+		n = (int) strlen(cols[i]);
+		/* 各列在高度内居中，再从最下方字符开始向上写 */
+		y0 = top + (height - n * cell) / 2 + (n - 1) * cell;
+		fm_text_btt(x, y0, cols[i], (size_t) n, cell * 4 / 3, cell,
+			    UI_ICON, UI_ICON, UI_ICON);
+		x += cell + gap;
+	}
+	return w;
+}
+
 /* 在空白区域（顶部行 gtop）绘制状态图标与按钮 */
 void *draw_ui(void *arg)
 {
@@ -287,11 +375,15 @@ void *draw_ui(void *arg)
 	bar_h = gh - pad * 2;
 	bar_top = cfg.scr_h - bar_h - pad;
 
+	/* 时间竖排需要字体；拿不到就只画图标 */
+	if (fm_font_acquire())
+		fprintf(stderr, "status bar: cannot load font, no clock\n");
+
 	while (true) {
 		fill_rect(0, cfg.scr_h - cfg.ui_h, cfg.scr_w, cfg.ui_h, GRAY, GRAY, GRAY);
 		// 从左往右
 		int gap = 50;
-		int width = bar_h * 2;
+		int width = bar_h + bar_h / 2;
 		for (int i = 0; i < 6; i++) {
 			int x = gap / 2 + i * (gap + width);
 			int cx = x + width / 2, cy = bar_top + bar_h / 2;
@@ -309,11 +401,15 @@ void *draw_ui(void *arg)
 			}
 		}
 
-		/* 从右往左：WiFi + 电量，靠右 */
+		/* 靠右依次为 电量、WiFi、时间，时间贴最右边 */
 		int cy = bar_top + bar_h / 2;
-		int bat_x = cfg.scr_w - width - gap;
-		draw_battery(bat_x, cy, width, bar_h * 4 / 5, read_battery_pct());
-		draw_wifi(bat_x - gap / 2 - bar_h, bar_top + bar_h * 4 / 5, bar_h * 3 / 5, wifi_level());
+		int t_right = cfg.scr_w - gap / 4;
+		int t_w = draw_time(t_right, bar_top, bar_h);
+		int wifi_x = (t_w ? t_right - t_w : t_right) - bar_h / 2 - gap / 3;
+		int bat_x = wifi_x - bar_h / 2 - bar_h * 2 - gap / 3;
+
+		draw_battery(bat_x, cy, bar_h * 2, bar_h * 4 / 5, read_battery_pct());
+		draw_wifi(wifi_x, cy, bar_h, wifi_level());
 		sleep(2);
 	}
 	return NULL;

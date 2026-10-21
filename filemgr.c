@@ -5,6 +5,7 @@
 #include <string.h>
 #include <limits.h>
 #include <dirent.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -53,6 +54,32 @@ static int fm_ascent_px[FM_MAX_PX + 1];	/* 按字号缓存的基线偏移 */
 static int fm_height_px[FM_MAX_PX + 1];	/* 按字号缓存的行高 */
 static uint16_t fm_w, fm_h;
 extern int bpp;
+
+/* 状态栏线程和阅读线程共用字体与字形缓存（FT_Face 的字号是有状态的），
+ * 用递归锁串行化访问：取字形时会内层再取行高/字号 */
+static pthread_mutex_t fm_lock;
+static pthread_once_t fm_lock_once = PTHREAD_ONCE_INIT;
+
+static void fm_lock_init(void)
+{
+	pthread_mutexattr_t attr;
+
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&fm_lock, &attr);
+	pthread_mutexattr_destroy(&attr);
+}
+
+static void fm_lock_take(void)
+{
+	pthread_once(&fm_lock_once, fm_lock_init);
+	pthread_mutex_lock(&fm_lock);
+}
+
+static void fm_lock_drop(void)
+{
+	pthread_mutex_unlock(&fm_lock);
+}
 
 void px(int x, int y, unsigned r, unsigned g, unsigned b);
 int is_text(const char *path);
@@ -119,23 +146,34 @@ static int fm_set_px(int face, int px)
 int fm_line_height(int px)
 {
 	FT_Size_Metrics *m;
+	int h;
 
 	px = fm_clamp_px(px);
-	if (fm_height_px[px])
-		return fm_height_px[px];
-	if (!fm_nfaces || fm_set_px(0, px))
-		return px;
-	m = &fm_faces[0]->size->metrics;
-	fm_ascent_px[px] = (m->ascender + 40) >> 6;
-	fm_height_px[px] = (m->height + 40) >> 6;
-	return fm_height_px[px] ? fm_height_px[px] : px;
+	fm_lock_take();
+	if (fm_height_px[px]) {
+		h = fm_height_px[px];
+	} else if (!fm_nfaces || fm_set_px(0, px)) {
+		h = px;
+	} else {
+		m = &fm_faces[0]->size->metrics;
+		fm_ascent_px[px] = (m->ascender + 40) >> 6;
+		fm_height_px[px] = (m->height + 40) >> 6;
+		h = fm_height_px[px] ? fm_height_px[px] : px;
+	}
+	fm_lock_drop();
+	return h;
 }
 
 static int fm_ascent(int px)
 {
+	int a;
+
 	px = fm_clamp_px(px);
 	fm_line_height(px);
-	return fm_ascent_px[px];
+	fm_lock_take();
+	a = fm_ascent_px[px];
+	fm_lock_drop();
+	return a;
 }
 
 /* 依次尝试主字体和后备字体，把 cp 渲染到 gl 中；返回 0 表示成功 */
@@ -197,18 +235,22 @@ static struct fm_glyph *fm_glyph_get(unsigned int cp, int px)
 	struct fm_glyph *gl;
 
 	px = fm_clamp_px(px);
+	fm_lock_take();
 	h = (cp * 31u + (unsigned int) px) & (FM_HASH_SIZE - 1);
 	for (gl = fm_hash[h]; gl; gl = gl->next)
-		if (gl->cp == cp && gl->px == px)
+		if (gl->cp == cp && gl->px == px) {
+			fm_lock_drop();
 			return gl;
+		}
 	if (fm_nglyphs >= FM_MAX_GLYPHS)
 		fm_glyphs_flush();
 	gl = fm_glyph_make(cp, px);
-	if (!gl)
-		return NULL;
-	gl->next = fm_hash[h];
-	fm_hash[h] = gl;
-	fm_nglyphs++;
+	if (gl) {
+		gl->next = fm_hash[h];
+		fm_hash[h] = gl;
+		fm_nglyphs++;
+	}
+	fm_lock_drop();
 	return gl;
 }
 
@@ -257,9 +299,14 @@ unsigned int fm_utf8(const char **sp)
 /* 单个字符的步进（越界字符按 '?' 处理） */
 int fm_advance(unsigned int cp, int px)
 {
-	struct fm_glyph *gl = fm_glyph_get(cp, px);
+	struct fm_glyph *gl;
+	int adv;
 
-	return gl && gl->advance > 0 ? gl->advance : 1;
+	fm_lock_take();
+	gl = fm_glyph_get(cp, px);
+	adv = gl && gl->advance > 0 ? gl->advance : 1;
+	fm_lock_drop();
+	return adv;
 }
 
 static int fm_load_face(const char *path, int index)
@@ -302,16 +349,22 @@ int fm_font_load(void)
 
 int fm_font_acquire(void)
 {
-	if (fm_font_load())
-		return 1;
-	fm_font_users++;
-	return 0;
+	int ret;
+
+	fm_lock_take();
+	ret = fm_font_load();
+	if (!ret)
+		fm_font_users++;
+	fm_lock_drop();
+	return ret;
 }
 
 void fm_font_release(void)
 {
+	fm_lock_take();
 	if (fm_font_users > 0 && --fm_font_users == 0)
 		fm_font_close();
+	fm_lock_drop();
 }
 
 /* 按字形灰度覆盖值把前景色混合到帧缓冲（逻辑坐标，绘制时转 90 度） */
@@ -337,11 +390,15 @@ static void fm_blend_px(int x, int y, int a, unsigned r, unsigned g, unsigned b)
 /* y 为文字行顶部，返回绘制后的横向位置 */
 int fm_char(int x, int y, unsigned int cp, int px, unsigned r, unsigned g, unsigned b)
 {
-	struct fm_glyph *gl = fm_glyph_get(cp, px);
-	int bx, by, row, col;
+	struct fm_glyph *gl;
+	int bx, by, row, col, adv;
 
-	if (!gl)
+	fm_lock_take();
+	gl = fm_glyph_get(cp, px);
+	if (!gl) {
+		fm_lock_drop();
 		return 1;
+	}
 	bx = x + gl->left;
 	by = y + fm_ascent(px) - gl->top;
 	for (row = 0; gl->bitmap && row < gl->h; row++) {
@@ -350,7 +407,64 @@ int fm_char(int x, int y, unsigned int cp, int px, unsigned r, unsigned g, unsig
 			if (src[col])
 				fm_blend_px(bx + col, by + row, src[col], r, g, b);
 	}
-	return gl->advance > 0 ? gl->advance : 1;
+	adv = gl->advance > 0 ? gl->advance : 1;
+	fm_lock_drop();
+	return adv;
+}
+
+/* 按字形覆盖率把一个像素混合到屏幕坐标（不转置，供竖排等非页面区域使用） */
+static void fm_blend_screen(int x, int y, int a, unsigned r, unsigned g, unsigned b)
+{
+	unsigned br, bg, bb;
+
+	if (a >= 255) {
+		px(x, y, r, g, b);
+		return;
+	}
+	fb_get(fb_mem(y) + (size_t) x * bpp, &br, &bg, &bb);
+	px(x, y, (r * a + br * (255 - a)) / 255,
+	   (g * a + bg * (255 - a)) / 255,
+	   (b * a + bb * (255 - a)) / 255);
+}
+
+/* 竖排单字：字形逆时针旋转 90°，居中画在 (x, y) 起、cell x cell 的方格内。
+ * 旋转后位图宽高互换，行优先的 (col, row) 映射到 (row, w-1-col) */
+static void fm_char_btt(int x, int y, unsigned int cp, int size, int cell,
+			unsigned r, unsigned g, unsigned b)
+{
+	struct fm_glyph *gl;
+	int ox, oy, row, col;
+
+	fm_lock_take();
+	gl = fm_glyph_get(cp, size);
+	if (!gl) {
+		fm_lock_drop();
+		return;
+	}
+	ox = x + (cell - gl->h) / 2;
+	oy = y + (cell - gl->w) / 2;
+	for (row = 0; gl->bitmap && row < gl->h; row++) {
+		const unsigned char *src = gl->bitmap + (size_t) row * gl->w;
+		for (col = 0; col < gl->w; col++)
+			if (src[col])
+				fm_blend_screen(ox + row, oy + gl->w - 1 - col,
+						src[col], r, g, b);
+	}
+	fm_lock_drop();
+}
+
+/* 竖排文字：字符旋转 90° 后自底向上书写。
+ * (x, y) 为最下方字符方格的左上角，cell 为方格边长，返回整列顶端 y */
+int fm_text_btt(int x, int y, const char *s, size_t len, int size, int cell,
+		unsigned r, unsigned g, unsigned b)
+{
+	const char *p = s, *end = s + len;
+
+	while (p < end && *p) {
+		fm_char_btt(x, y, fm_utf8(&p), size, cell, r, g, b);
+		y -= cell;
+	}
+	return y + cell;
 }
 
 /* 绘制 len 字节的 UTF-8 文本 */

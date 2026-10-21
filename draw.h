@@ -33,3 +33,6 @@ int fm_advance(unsigned int cp, int px);
 int fm_char(int x, int y, unsigned int cp, int px, unsigned r, unsigned g, unsigned b);
 int fm_text_n(int x, int y, const char *s, size_t len, int px, unsigned r, unsigned g, unsigned b);
 int fm_text(int x, int y, const char *s, int px, unsigned r, unsigned g, unsigned b);
+/* 竖排文字：字符逆时针旋转 90°，自底向上书写，(x, y) 为最下方字符方格左上角 */
+int fm_text_btt(int x, int y, const char *s, size_t len, int size, int cell,
+		unsigned r, unsigned g, unsigned b);

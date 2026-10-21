@@ -31,5 +31,9 @@ Text reader keys:
 - k  scroll up half a screen
 - q  close the text reader
 
-Like the PDF view, the file manager shows the status bar (page buttons,
-battery, WiFi) along the bottom edge of the framebuffer.
+Like the PDF view, the file manager shows the status bar (page buttons, clock,
+battery, WiFi) along the bottom edge of the framebuffer. The right edge holds,
+from the screen edge inwards, the clock, the WiFi badge and the battery. The
+clock is drawn as three vertical columns - year, month-day, hour:minute - with
+the characters rotated 90 degrees and written bottom to top, so it fits the
+short status bar.

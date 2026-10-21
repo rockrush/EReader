@@ -2,13 +2,15 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "draw.h"
 
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
+#define TX_CHUNK	(64 << 10)	/* 增量读取的起始块大小 */
 #define TX_MAX_LINES	(1 << 20)	/* 折行后的显示行上限 */
 #define TX_TAB		4		/* tab 展开后的列数 */
-#define TX_FONT_PX	5		/* 基准字号（像素），按屏幕缩放倍数放大 */
+#define TX_FONT_PX	6		/* 基准字号（像素），按屏幕缩放倍数放大 */
 #define TX_PX		(TX_FONT_PX * FBM_FONT_SCALE)
 
 struct tx_line {
@@ -106,35 +108,69 @@ static int tx_format(struct tx_view *v, int avail)
 	return 0;
 }
 
-/* 载入文本：展开 tab、过滤控制字符，保留合法的 UTF-8 序列 */
-// TODO: 读不了 /proc 下大小为零的文件
-static char *tx_load(const char *path, size_t *size)
+/* 读入整个文件，超过 TX_MAX_SIZE 的部分丢弃；返回缓冲区和字节数 */
+static char *tx_read(const char *path, size_t *size)
 {
+	struct stat st;
 	FILE *fp;
-	char *in, *out;
-	size_t len, n = 0, i, tabs = 0, col = 0;
-	long sz;
+	char *in, *tmp;
+	size_t cap = TX_CHUNK, len = 0, got;
 
 	fp = fopen(path, "r");
 	if (!fp)
 		return NULL;
-	if (fseek(fp, 0, SEEK_END) || (sz = ftell(fp)) < 0 || fseek(fp, 0, SEEK_SET)) {
-		fclose(fp);
-		return NULL;
-	}
-	len = (size_t) sz > TX_MAX_SIZE ? TX_MAX_SIZE : (size_t) sz;
-	if ((size_t) sz > len)
-		fprintf(stderr, "%s: only the first %d MB are shown\n", path,
-			TX_MAX_SIZE >> 20);
-	in = malloc(len + 1);
+	/* /proc 下的虚拟文件大小为 0，只能按需增量读取，stat 的大小仅作为起始容量参考 */
+	if (!fstat(fileno(fp), &st) && S_ISREG(st.st_mode) && st.st_size > 0)
+		cap = MIN((size_t) st.st_size + 1, TX_MAX_SIZE);
+	in = malloc(cap);
 	if (!in) {
 		fclose(fp);
 		return NULL;
 	}
-	len = fread(in, 1, len, fp);
-	fclose(fp);
-	in[len] = 0;
+	for (;;) {
+		if (len == cap) {
+			if (cap >= TX_MAX_SIZE)
+				break;
+			cap = MIN(cap * 2, TX_MAX_SIZE);
+			tmp = realloc(in, cap);
+			if (!tmp) {
+				free(in);
+				fclose(fp);
+				return NULL;
+			}
+			in = tmp;
+		}
+		got = fread(in + len, 1, cap - len, fp);
+		len += got;
+		if (!got) {
+			if (ferror(fp)) {
+				free(in);
+				fclose(fp);
+				return NULL;
+			}
+			break;
+		}
+	}
+	if (len >= TX_MAX_SIZE) {
+		char extra;
 
+		if (fread(&extra, 1, 1, fp) == 1)
+			fprintf(stderr, "%s: only the first %d MB are shown\n", path, TX_MAX_SIZE >> 20);
+	}
+	fclose(fp);
+	*size = len;
+	return in;
+}
+
+/* 载入文本：展开 tab、过滤控制字符，保留合法的 UTF-8 序列 */
+static char *tx_load(const char *path, size_t *size)
+{
+	char *in, *out;
+	size_t len, n = 0, i, tabs = 0, col = 0;
+
+	in = tx_read(path, &len);
+	if (!in)
+		return NULL;
 	for (i = 0; i < len; i++)
 		if (in[i] == '\t')
 			tabs++;

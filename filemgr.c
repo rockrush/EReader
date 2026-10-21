@@ -10,9 +10,10 @@
 #include FT_FREETYPE_H
 
 #include "draw.h"
+#include "fontlist.h"
 
 #define FM_FONT_PX	12	/* 基准字号（像素），按屏幕缩放倍数放大 */
-#define FM_MAX_FACES	16	/* 主字体 + 后备字体 */
+#define FM_MAX_FACES	48	/* 主字体 + 各文字系统的后备字体 */
 #define FM_MAX_GLYPHS	8192	/* 字形缓存上限，超出时整体清空 */
 #define FM_HASH_SIZE	1024
 #define FM_MAX_PX	127
@@ -261,13 +262,13 @@ int fm_advance(unsigned int cp, int px)
 	return gl && gl->advance > 0 ? gl->advance : 1;
 }
 
-static int fm_load_face(const char *path)
+static int fm_load_face(const char *path, int index)
 {
 	FT_Face face;
 
 	if (fm_nfaces >= FM_MAX_FACES)
 		return 1;
-	if (FT_New_Face(fm_lib, path, 0, &face))
+	if (FT_New_Face(fm_lib, path, index, &face))
 		return 1;
 	FT_Select_Charmap(face, FT_ENCODING_UNICODE);
 	fm_faces[fm_nfaces] = face;
@@ -278,19 +279,19 @@ static int fm_load_face(const char *path)
 
 int fm_font_load(void)
 {
-	const char *env;
-	int i, n = 0;
+	struct font_candidate fc;
+	int n = 0;
 
 	if (fm_nfaces)
 		return 0;
 	if (FT_Init_FreeType(&fm_lib))
 		return 1;
-	env = getenv("EREADER_FONT");
-	if (env && env[0] && !fm_load_face(env))
-		n++;
-	for (i = 0; font_paths[i]; i++)
-		if (!fm_load_face(font_paths[i]))
-			n++;
+	if (font_list_open()) {
+		while (fm_nfaces < FM_MAX_FACES && font_list_next(&fc))
+			if (!fm_load_face(fc.path, fc.index))
+				n++;
+		font_list_close();
+	}
 	if (!n) {
 		fprintf(stderr, "cannot load font\n");
 		fm_font_close();

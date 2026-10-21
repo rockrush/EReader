@@ -8,12 +8,12 @@
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
 #define TX_MAX_LINES	(1 << 20)	/* 折行后的显示行上限 */
 #define TX_TAB		4		/* tab 展开后的列数 */
-#define TX_FONT_PX	8		/* 基准字号（像素），按屏幕缩放倍数放大 */
+#define TX_FONT_PX	5		/* 基准字号（像素），按屏幕缩放倍数放大 */
 #define TX_PX		(TX_FONT_PX * FBM_FONT_SCALE)
 
 struct tx_line {
-	size_t off;		/* 在文本缓冲区中的偏移 */
-	size_t len;		/* 字节长度（不含换行） */
+	size_t off;	/* 在文本缓冲区中的偏移 */
+	size_t len;	/* 字节长度（不含换行） */
 };
 
 struct tx_view {
@@ -21,7 +21,7 @@ struct tx_view {
 	size_t size;
 	struct tx_line *lines;	/* 折行后的显示行 */
 	int n;
-	int top;		/* 顶部显示行号 */
+	int top;	/* 顶部显示行号 */
 };
 
 static uint16_t tx_w, tx_h;
@@ -41,9 +41,7 @@ static int tx_push(struct tx_view *v, int *cap, size_t off, size_t len)
 {
 	if (v->n == *cap) {
 		int ncap = *cap ? *cap * 2 : 256;
-		struct tx_line *tmp = realloc(v->lines,
-			(size_t) ncap * sizeof(*tmp));
-
+		struct tx_line *tmp = realloc(v->lines, (size_t) ncap * sizeof(*tmp));
 		if (!tmp)
 			return 1;
 		v->lines = tmp;

@@ -12,8 +12,6 @@
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
 
-extern const char *font_paths[];
-
 int fb_init(char *dev);
 void fb_free(void);
 unsigned fb_mode(void);

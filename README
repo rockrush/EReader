@@ -4,14 +4,21 @@ Build dependencies (detected via pkg-config):
 - poppler-cpp (PDF rendering)
 - libfyaml    (ereader.yml parsing)
 - freetype2   (file manager text)
+- fontconfig  (optional, used to pick system fonts)
 
 Run `make` to build. The file manager and the text reader draw UTF-8 text
-(Chinese, Japanese, Korean, Cyrillic, Arabic, Thai, Devanagari, Hebrew, ...)
-with the built-in font list: fonts are loaded in order and the later ones act
-as fallbacks for characters the first font lacks. Set EREADER_FONT to an
-absolute font file path to use it as the primary font. The file manager uses
-12 px text and the text reader uses 10 px text (`FBM_FONT_SCALE` scales both
-for the target screen).
+using the fonts installed on the system. fontconfig picks the preferred
+monospace font as the primary face, then one font per common language as a
+fallback: Latin, Greek, Cyrillic, Hebrew, Arabic, Persian/Urdu, Devanagari,
+Bengali, Gurmukhi, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam, Sinhala,
+Thai, Lao, Tibetan, Myanmar, Khmer, Georgian, Armenian, Ethiopic, Syriac,
+Thaana, Tifinagh, N'Ko, Cherokee, Vai, plus Chinese, Japanese, Korean and
+common symbols. Without fontconfig the standard font directories
+(/usr/share/fonts, ~/.fonts, ...) are scanned instead and the same common
+scripts are preferred. Set EREADER_FONT to one or more absolute font file
+paths (colon-separated) to use them as the primary faces. The file manager
+uses 12 px text and the text reader uses 10 px text (`FBM_FONT_SCALE` scales
+both for the target screen).
 
 File manager keys:
 - e  enter the selected folder, open the selected PDF, or read a text file

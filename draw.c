@@ -27,16 +27,6 @@ static int tty_in = -1;			/* tty for reading keys */
 static struct termios tty_orig;		/* tty state before graphics mode */
 static bool tty_orig_valid;
 
-/* 优先使用等宽字体，其余作为多语言后备字体；也可用环境变量 EREADER_FONT 指定字体文件 */
-const char *font_paths[] = {
-	"/usr/share/fonts/truetype/hack/Hack-Regular.ttf",
-	"/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
-	"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-	"/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
-	"/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-	NULL,
-};
-
 static int fb_len(void)
 {
 	return finfo.line_length * vinfo.yres_virtual;

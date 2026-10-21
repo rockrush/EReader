@@ -9,6 +9,9 @@
 #define UI_BORDER	90	/* 按钮/电池边框色 */
 #define UI_ICON		45	/* 图标/文字颜色 */
 
+#define MIN(a, b)	((a) < (b) ? (a) : (b))
+#define MAX(a, b)	((a) > (b) ? (a) : (b))
+
 extern const char *font_paths[];
 
 int fb_init(char *dev);

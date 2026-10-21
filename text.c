@@ -10,8 +10,6 @@
 #define TX_TAB		4		/* tab 展开后的列数 */
 #define TX_FONT_PX	8		/* 基准字号（像素），按屏幕缩放倍数放大 */
 #define TX_PX		(TX_FONT_PX * FBM_FONT_SCALE)
-#define MIN(a, b)	((a) < (b) ? (a) : (b))
-#define MAX(a, b)	((a) > (b) ? (a) : (b))
 
 struct tx_line {
 	size_t off;		/* 在文本缓冲区中的偏移 */
@@ -216,8 +214,8 @@ int show_text(const char *path, uint16_t w, uint16_t h)
 	struct tx_view v;
 	int c, step, visible, maxtop, retval = EXIT_FAILURE;
 
-	tx_w = w;
-	tx_h = h;
+	tx_w = h;
+	tx_h = w;
 	memset(&v, 0, sizeof(v));
 	if (fm_font_acquire())
 		return EXIT_FAILURE;

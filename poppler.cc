@@ -6,8 +6,7 @@
 #include <poppler/cpp/poppler-page-renderer.h>
 
 extern "C" {
-#include "doc.h"
-}
+void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 struct doc {
 	poppler::document *doc;
@@ -70,9 +69,15 @@ int doc_pages(struct doc *doc)
 	return doc->doc->pages();
 }
 
+void doc_close(struct doc *doc)
+{
+	delete doc->doc;
+	free(doc);
+}
+
 struct doc *doc_open(char *path)
 {
-	struct doc *doc = (struct doc *) malloc(sizeof(*doc));
+	struct doc *doc = (struct doc *)malloc(sizeof(*doc));
 	if (doc == NULL)
 		return NULL;
 	doc->doc = poppler::document::load_from_file(path);
@@ -82,9 +87,4 @@ struct doc *doc_open(char *path)
 	}
 	return doc;
 }
-
-void doc_close(struct doc *doc)
-{
-	delete doc->doc;
-	free(doc);
-}
+}	// extern "C"

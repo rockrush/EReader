@@ -56,7 +56,7 @@ extern int bpp;
 void px(int x, int y, unsigned r, unsigned g, unsigned b);
 int is_text(const char *path);
 int is_pdf(const char *path);
-int show_pdf(char *path);
+int show_pdf(char *path, uint16_t w, uint16_t h);
 int show_text(char *path, uint16_t w, uint16_t h);
 
 static void fm_glyphs_flush(void)
@@ -482,12 +482,12 @@ static int fm_enter(struct fm_view *v)
 	if (!v->ents[v->sel].isreg)
 		return 1;	/* 设备、管道等不做处理 */
 	if (is_pdf(v->ents[v->sel].name)) {
-		show_pdf(next);	/* 打开失败时 show_pdf 自己会报错 */
+		show_pdf(next, fm_h, fm_w);
 		return 0;
 	}
 	if (!is_text(next))
 		return 1;
-	show_text(next, fm_w, fm_h);
+	show_text(next, fm_h, fm_w);
 	return 0;		/* 返回后重绘文件列表 */
 }
 
@@ -558,6 +558,11 @@ static void fm_draw(struct fm_view *v)
 		if (e->isdir)
 			fm_text(x, y + FBM_FONT_SCALE, "/", px, fg, fg, fg);
 	}
+}
+
+void fm_set_view(uint16_t w, uint16_t h) {
+	fm_w = h;
+	fm_h = w;
 }
 
 int show_filemgr(char *path, uint16_t w, uint16_t h)

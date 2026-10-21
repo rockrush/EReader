@@ -14,9 +14,6 @@
 #include "draw.h"
 #include "doc.h"
 
-#define MIN(a, b)	((a) < (b) ? (a) : (b))
-#define MAX(a, b)	((a) > (b) ? (a) : (b))
-
 #define FBDEV		"/dev/fb0"
 #define MARGIN		1
 #define GRAY		128	/* 屏幕空白处的灰色填充 */
@@ -36,21 +33,32 @@ struct ereader_cfg {
 	.rotate = 270,	// 固定旋转 270 度
 };
 
+static uint16_t pdf_w, pdf_h;
+
 static int zoom = 280;
-static int num = 1;		/* page number */
+static int cur_page = 1;	// 当前页码
 
 static struct doc *doc;
 static char *pbuf;		/* current page */
 static int prows, pcols;	/* current page dimensions */
-static int prow, pcol;		/* page position */
-static int srow, scol;		/* screen position */
+static int pcol;		/* page position */
+static int scol;		/* screen position */
 int bpp;			/* bytes per pixel */
-static int count;
 
 void term_setup(struct termios *term);
 void term_cleanup(struct termios *term);
+void fm_set_view(uint16_t w, uint16_t h);
 int show_text(const char *path, uint16_t w, uint16_t h);
+int show_pdf(char *path, uint16_t w, uint16_t h);
 int show_filemgr(char *path, uint16_t w, uint16_t h);
+
+/* this can be optimised based on framebuffer pixel format */
+void fb_set(char *d, unsigned r, unsigned g, unsigned b)
+{
+	unsigned c = fb_val(r, g, b);
+	for (int i = 0; i < bpp; i++)
+		d[i] = (c >> (i << 3)) & 0xff;
+}
 
 /* 在屏幕坐标设置一个像素（越界自动忽略） */
 void px(int x, int y, unsigned r, unsigned g, unsigned b)
@@ -351,23 +359,24 @@ void *draw_ui(void *arg)
 	return NULL;
 }
 
+//===================================================
 static void draw(void)
 {
 	int i, j;
 	char gray[4];
 	char *rbuf = malloc(cfg.scr_w * bpp);
 	fb_set(gray, GRAY, GRAY, GRAY);
-	for (i = srow; i < srow + cfg.scr_h - cfg.ui_h; i++) {
+	for (i = 0; i < cfg.scr_h - cfg.ui_h; i++) {
 		int cbeg = MAX(scol, pcol);
 		int cend = MIN(scol + cfg.scr_w, pcol + pcols);
 		for (j = 0; j < cfg.scr_w; j++)
 			memcpy(rbuf + j * bpp, gray, bpp);
-		if (i >= prow && i < prow + prows && cbeg < cend) {
+		if (i >= 0 && i < prows && cbeg < cend) {
 			memcpy(rbuf + (cbeg - scol) * bpp,
-				pbuf + ((i - prow) * pcols + cbeg - pcol) * bpp,
+				pbuf + (i * pcols + cbeg - pcol) * bpp,
 				(cend - cbeg) * bpp);
 		}
-		memcpy(fb_mem(i - srow), rbuf, cfg.scr_w * bpp);
+		memcpy(fb_mem(i), rbuf, cfg.scr_w * bpp);
 	}
 	free(rbuf);
 }
@@ -585,85 +594,63 @@ static int loadpage(int p)
 	pcols = 0;
 	if (renderpage(p))
 		return 1;
-	prow = 0;		/* 顶部对齐，下方以灰色填充 */
 	pcol = -pcols / 2;	/* 水平居中 */
-	num = p;
+	cur_page = p;
 	return 0;
 }
 
-static int getcount(int def)
-{
-	int result = count ? count : def;
-	count = 0;
-	return result;
-}
-
-static int reload(void)
+static int reload(char *path)
 {
 	doc_close(doc);
-	doc = doc_open(cfg.path);
+	doc = doc_open(path);
 	if (!doc || !doc_pages(doc)) {
-		fprintf(stderr, "\ncannot open <%s>\n", cfg.path);
+		fprintf(stderr, "\ncannot open <%s>\n", path);
 		return 1;
 	}
-	if (!loadpage(num))
+	if (!loadpage(cur_page))
 		draw();
 	return 0;
 }
 
-/* this can be optimised based on framebuffer pixel format */
-void fb_set(char *d, unsigned r, unsigned g, unsigned b)
-{
-	unsigned c = fb_val(r, g, b);
-	int i;
-	for (i = 0; i < bpp; i++)
-		d[i] = (c >> (i << 3)) & 0xff;
-}
-
-int show_pdf(char *path)
+int show_pdf(char *path, uint16_t w, uint16_t h)
 {
 	int c, retval = EXIT_FAILURE;
 	if (!path || !strlen(path)) {	// 此时显示文件管理器
 		fprintf(stderr, "no PDF file specified\n");
 		goto fail_file;
 	}
+	pdf_w = h;
+	pdf_h = w;
 	doc = doc_open(path);
 	if (!doc || !doc_pages(doc)) {
 		fprintf(stderr, "cannot open <%s>\n", path);
 		goto fail_file;
 	}
-	/* 供 e 键刷新使用；从文件管理器打开时路径可能与启动配置不同 */
-	strncpy(cfg.path, path, sizeof(cfg.path) - 1);
-	cfg.path[sizeof(cfg.path) - 1] = 0;
-	if (num < 1 || num > doc_pages(doc))
-		num = 1;
-	loadpage(num);
-	srow = prow;
-	scol = -cfg.scr_w / 2;
+
+	if ((cur_page < 1) || (cur_page > doc_pages(doc)))
+		cur_page = 1;
+	loadpage(cur_page);
+	scol = -w / 2;
 	draw();
 
 	while ((c = readkey()) != -1) {
+		printf("show_pdf: %d, %d, %d, %d\n", prows, pcols, pdf_w, pdf_h);
 		switch (c) {
 		case 'q':	// 退出
 			goto fail_file;
 		case 'e':	// 刷新
-			if (reload())
+			if (reload(path))
 				goto fail_file;
 			break;
 		case 'j':	// 下一页
-			if (!loadpage(num + getcount(1)))
-				srow = prow;
+			loadpage(cur_page + 1);
 			break;
 		case 'k':	// 上一页
-			if (!loadpage(num - getcount(1)))
-				srow = prow;
+			loadpage(cur_page - 1);
 			break;
 		default:
 			continue;
 		}
-		srow = MAX(prow - cfg.scr_h + MARGIN, MIN(prow + prows - MARGIN, srow));
-		if (prows <= cfg.scr_h)
-			srow = prow;	/* 页面比屏幕矮时顶部对齐 */
 		scol = MAX(pcol - cfg.scr_w + MARGIN, MIN(pcol + pcols - MARGIN, scol));
 		if (pcols <= cfg.scr_w)
 			scol = pcol + (pcols - cfg.scr_w) / 2;	/* 页面比屏幕窄时水平居中 */
@@ -681,6 +668,7 @@ fail_file:
 	}
 	return retval;
 }
+//===================================================
 
 /* 粗略判断文本文件：前 4KB 无 NUL 字节，且至少九成是可打印字符 */
 int is_text(const char *path)
@@ -726,6 +714,7 @@ static void ebook(void) {
 			return;
 		}
 
+	fm_set_view(cfg.scr_w, cfg.scr_h - cfg.ui_h);
 	while (true) {
 		if (!tmp_path[0])
 			strncpy(tmp_path, "/", 2);
@@ -740,14 +729,14 @@ static void ebook(void) {
 			goto _parent;
 
 		if (is_pdf(base)) {
-			show_pdf(tmp_path);
+			show_pdf(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
 			goto _parent;
 		}
 
 		// TODO: 其他文件格式
 
 		if (is_text(tmp_path))
-			show_text(tmp_path, cfg.scr_h - cfg.ui_h, cfg.scr_w);
+			show_text(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
 _parent:
 		base[0] = 0;
 	}
@@ -763,7 +752,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	memset(cfg.path, 0, PATH_MAX);
-	int count = fy_document_scanf(fyd, "/path %s /page %u", cfg.path, &num);
+	int count = fy_document_scanf(fyd, "/path %s /page %u", cfg.path, &cur_page);
 	if (count != 2) {
 		fy_document_destroy(fyd);
 		return 1;

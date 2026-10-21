@@ -5,10 +5,6 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include <libfyaml.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <linux/kd.h>
-#include <unistd.h>
 
 #include "draw.h"
 #include "ereader.h"
@@ -23,8 +19,7 @@ struct ereader_cfg cfg = {
 int bpp;	// bytes per pixel
 int cur_page;	// 当前页码
 
-void term_setup(struct termios *term);
-void term_cleanup(struct termios *term);
+void graph_mode(bool state);
 void fm_set_view(uint16_t w, uint16_t h);
 void *draw_ui(void *arg);
 int show_text(const char *path, uint16_t w, uint16_t h);
@@ -103,29 +98,12 @@ _parent:
 	}
 }
 
-// GRAPHICS模式下，fbcon 将停止绘制光标和文本
-int graph_mode(bool state) {
-	int tty_fd = open("/dev/tty0", O_RDWR);
-	if (tty_fd < 0) {
-		perror("open /dev/tty0");
-		return -1;
-	}
-
-	if (ioctl(tty_fd, KDSETMODE, state ? KD_GRAPHICS : KD_TEXT) < 0) {
-		perror("ioctl KDSETMODE KD_GRAPHICS");
-		close(tty_fd);
-		return -1;
-	}
-	return 0;
-}
-
 static void sigcont(int sig) {
 	graph_mode(true);
-	//term_setup(&cfg.term);
 }
 static void sigint(int sig) {
-	//term_setup(&cfg.term);
 	graph_mode(false);
+	fb_free();
 	exit(EXIT_FAILURE);
 }
 
@@ -154,12 +132,10 @@ int main(int argc, char *argv[])
 	bpp = FBM_BPP(fb_mode());
 
 	graph_mode(true);
-	//term_setup(&cfg.term);
 	signal(SIGCONT, sigcont);
 	signal(SIGINT, sigint);
 	signal(SIGTERM, sigint);
 	ebook();
-	//term_cleanup(&cfg.term);
 	graph_mode(false);
 
 	fb_free();

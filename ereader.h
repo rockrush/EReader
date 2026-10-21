@@ -1,7 +1,6 @@
 #ifndef _EREADER_H
 #define _EREADER_H
 #include <stdint.h>
-#include <termios.h>
 #include <limits.h>
 
 #define GRAY	128	// 屏幕空白处的灰色填充
@@ -11,7 +10,6 @@ struct ereader_cfg {
 	uint16_t scr_h;
 	uint8_t ui_h;
 	int32_t rotate;
-	struct termios term;
 	char path[PATH_MAX];	// 当前处理路径
 };
 

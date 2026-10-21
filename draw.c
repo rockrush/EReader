@@ -1,12 +1,16 @@
-#include <fcntl.h>
-#include <linux/fb.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <stdbool.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <termios.h>
 #include <sys/ioctl.h>
+#include <linux/fb.h>
 #include <sys/mman.h>
-#include <unistd.h>
+#include <linux/kd.h>
+
 #include "draw.h"
 
 #define NLEVELS		(1 << 8)
@@ -19,6 +23,9 @@ static int bpp;				/* bytes per pixel */
 static int nr, ng, nb;			/* color levels */
 static int rl, rr, gl, gr, bl, br;	/* shifts per color */
 static int xres, yres, xoff, yoff;	/* drawing region */
+static int tty_in = -1;			/* tty for reading keys */
+static struct termios tty_orig;		/* tty state before graphics mode */
+static bool tty_orig_valid;
 
 /* 优先使用等宽字体，其余作为多语言后备字体；也可用环境变量 EREADER_FONT 指定字体文件 */
 const char *font_paths[] = {
@@ -164,25 +171,77 @@ void fb_get(char *d, unsigned *r, unsigned *g, unsigned *b)
 	*b = ((c >> bl) & ((1u << vinfo.blue.length) - 1)) << br;
 }
 
-void term_setup(struct termios *term) {
-	struct termios _cfg;
-	tcgetattr(0, term);
-	_cfg = *term;
-	_cfg.c_lflag &= ~ICANON;
-	_cfg.c_lflag &= ~ECHO;
-	tcsetattr(0, TCSAFLUSH, &_cfg);
-	printf("\x1b[?25l");	/* hide the cursor */
-	printf("\x1b[2J");	/* clear the screen */
-	fflush(stdout);
+//== 用按钮读取函数替换键盘 =================
+/* 读键优先用 stdin：从本机控制台或串口/ssh 登录都能用；stdin 被重定向时退回 /dev/tty0 */
+static int tty_in_fd(void)
+{
+	if (tty_in >= 0)
+		return tty_in;
+	tty_in = isatty(STDIN_FILENO) ? STDIN_FILENO : open("/dev/tty0", O_RDWR | O_NOCTTY);
+	return tty_in;
 }
 
-void term_cleanup(struct termios *term) {
-	tcsetattr(0, 0, term);
-	printf("\x1b[?25h\n");	/* show the cursor */
+/* 关闭行缓冲和回显：GRAPHICS 模式下按键不再有回显，若仍处于 ICANON，
+ * read() 要等回车才返回，单键就读不到；保留 ISIG 使 Ctrl+C 依然有效 */
+static int key_raw(bool raw)
+{
+	struct termios t;
+	int fd = tty_in_fd();
+
+	if (fd < 0)
+		return -1;
+	if (!tty_orig_valid) {
+		if (!raw)
+			return 0;
+		if (tcgetattr(fd, &tty_orig) < 0)
+			return -1;
+		tty_orig_valid = true;
+	}
+	t = tty_orig;
+	if (raw) {
+		t.c_lflag &= ~(ICANON | ECHO);
+		t.c_cc[VMIN] = 1;
+		t.c_cc[VTIME] = 0;
+	} else {
+		tty_orig_valid = false;
+	}
+	return tcsetattr(fd, TCSANOW, &t);
+}
+
+/* GRAPHICS 模式下 fbcon 将停止绘制光标和文本，但键盘仍按 K_XLATE 送进 tty，
+ * 所以 Ctrl+C 等信号依然有效；读键还必须关掉行缓冲，否则 read() 要等回车 */
+void graph_mode(bool state) {
+	int tty_fd = open("/dev/tty0", O_RDWR);
+
+	/* 终端设置独立于 /dev/tty0：没有切换 VT 的权限时 readkey() 也要能读到单键 */
+	if (state && key_raw(true) < 0)
+		perror("tcsetattr");
+
+	if (tty_fd < 0)
+		perror("open /dev/tty0");
+	else {
+		if (ioctl(tty_fd, KDSKBMODE, K_XLATE) < 0)
+			perror("ioctl KDSKBMODE K_XLATE");
+		if (ioctl(tty_fd, KDSETMODE, state ? KD_GRAPHICS : KD_TEXT) < 0)
+			perror(state ? "ioctl KDSETMODE KD_GRAPHICS" : "ioctl KDSETMODE KD_TEXT");
+		close(tty_fd);
+	}
+
+	if (!state && key_raw(false) < 0)
+		perror("tcsetattr");
 }
 
 int readkey(void)
 {
 	unsigned char b;
-	return (read(0, &b, 1) <= 0) ? -1 : b;
+	int fd = tty_in_fd();
+	ssize_t n;
+
+	if (fd < 0)
+		return -1;
+	do
+		n = read(fd, &b, 1);
+	while (n < 0 && errno == EINTR);
+	return (n <= 0) ? -1 : b;
 }
+//================================

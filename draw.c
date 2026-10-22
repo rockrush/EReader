@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <linux/kd.h>
 
+#include "ereader.h"
 #include "draw.h"
 
 #define NLEVELS		(1 << 8)
@@ -19,10 +20,10 @@ static struct fb_var_screeninfo vinfo;	/* linux-specific FB structure */
 static struct fb_fix_screeninfo finfo;	/* linux-specific FB structure */
 static int fd;				/* FB device file descriptor */
 static void *fb;			/* mmap()ed FB memory */
-static int bpp;				/* bytes per pixel */
+extern int bpp;				/* bytes per pixel */
 static int nr, ng, nb;			/* color levels */
 static int rl, rr, gl, gr, bl, br;	/* shifts per color */
-static int xres, yres, xoff, yoff;	/* drawing region */
+static int xoff, yoff;			/* drawing region */
 static int tty_in = -1;			/* tty for reading keys */
 static struct termios tty_orig;		/* tty state before graphics mode */
 static bool tty_orig_valid;
@@ -72,13 +73,6 @@ void fb_cmap(void)
 	ioctl(fd, FBIOPUTCMAP, &cmap);
 }
 
-unsigned fb_mode(void)
-{
-	return ((rl < gl) << 22) | ((rl < bl) << 21) | ((gl < bl) << 20) |
-		(bpp << 16) | (vinfo.red.length << 8) |
-		(vinfo.green.length << 4) | (vinfo.blue.length);
-}
-
 static void init_colors(void)
 {
 	nr = 1 << vinfo.red.length;
@@ -95,11 +89,6 @@ static void init_colors(void)
 int fb_init(char *dev)
 {
 	char *path = dev;
-	char *geom = dev ? strchr(dev, ':') : NULL;
-	if (geom) {
-		*geom = '\0';
-		sscanf(geom + 1, "%dx%d%d%d", &xres, &yres, &xoff, &yoff);
-	}
 	fd = open(path, O_RDWR);
 	if (fd < 0)
 		goto failed;
@@ -115,6 +104,9 @@ int fb_init(char *dev)
 	init_colors();
 	fb_cmap_save(1);
 	fb_cmap();
+
+	cfg.scr_h = vinfo.yres;
+	cfg.scr_w = vinfo.xres;
 	return 0;
 failed:
 	perror("fb_init()");
@@ -127,16 +119,6 @@ void fb_free(void)
 	fb_cmap_save(0);
 	munmap(fb, fb_len());
 	close(fd);
-}
-
-int fb_rows(void)
-{
-	return yres ? yres : vinfo.yres;
-}
-
-int fb_cols(void)
-{
-	return xres ? xres : vinfo.xres;
 }
 
 void *fb_mem(int r)
@@ -161,7 +143,7 @@ void fb_get(char *d, unsigned *r, unsigned *g, unsigned *b)
 	*b = ((c >> bl) & ((1u << vinfo.blue.length) - 1)) << br;
 }
 
-//== 用按钮读取函数替换键盘 =================
+// TODO: 用按钮读取函数替换键盘
 /* 读键优先用 stdin：从本机控制台或串口/ssh 登录都能用；stdin 被重定向时退回 /dev/tty0 */
 static int tty_in_fd(void)
 {
@@ -234,4 +216,3 @@ int readkey(void)
 	while (n < 0 && errno == EINTR);
 	return (n <= 0) ? -1 : b;
 }
-//================================

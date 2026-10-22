@@ -9,20 +9,15 @@ extern "C" {
 void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 struct doc {
-	poppler::document *doc;
+	union {
+		poppler::document *pdf;
+		void *unknown;
+	};
 };
-
-static poppler::rotation_enum rotation(int times)
-{
-	if (times == 1)	return poppler::rotate_90;
-	if (times == 2)	return poppler::rotate_180;
-	if (times == 3)	return poppler::rotate_270;
-	return poppler::rotate_0;
-}
 
 int doc_size(struct doc *doc, int p, int *width, int *height)
 {
-	poppler::page *page = doc->doc->create_page(p - 1);
+	poppler::page *page = doc->pdf->create_page(p - 1);
 	poppler::rectf r;
 	if (!page)
 		return 1;
@@ -33,9 +28,9 @@ int doc_size(struct doc *doc, int p, int *width, int *height)
 	return 0;
 }
 
-void *doc_draw(struct doc *doc, int p, int zoom, int rotate, int bpp, int *rows, int *cols)
+void *doc_draw(struct doc *doc, int p, int zoom, int bpp, int *rows, int *cols)
 {
-	poppler::page *page = doc->doc->create_page(p - 1);
+	poppler::page *page = doc->pdf->create_page(p - 1);
 	poppler::page_renderer pr;
 	int x, y;
 	int h, w;
@@ -44,7 +39,7 @@ void *doc_draw(struct doc *doc, int p, int zoom, int rotate, int bpp, int *rows,
 	pr.set_render_hint(poppler::page_renderer::antialiasing, true);
 	pr.set_render_hint(poppler::page_renderer::text_antialiasing, true);
 	poppler::image img = pr.render_page(page, (float) 72 * zoom / 100,
-		(float) 72 * zoom / 100, -1, -1, -1, -1, rotation((rotate + 89) / 90));
+		(float) 72 * zoom / 100, -1, -1, -1, -1, poppler::rotate_270);
 	h = img.height();
 	w = img.width();
 	dat = (unsigned char *) img.data();
@@ -66,12 +61,12 @@ void *doc_draw(struct doc *doc, int p, int zoom, int rotate, int bpp, int *rows,
 
 int doc_pages(struct doc *doc)
 {
-	return doc->doc->pages();
+	return doc->pdf->pages();
 }
 
 void doc_close(struct doc *doc)
 {
-	delete doc->doc;
+	delete doc->pdf;
 	free(doc);
 }
 
@@ -80,8 +75,8 @@ struct doc *doc_open(char *path)
 	struct doc *doc = (struct doc *)malloc(sizeof(*doc));
 	if (doc == NULL)
 		return NULL;
-	doc->doc = poppler::document::load_from_file(path);
-	if (!doc->doc) {
+	doc->pdf = poppler::document::load_from_file(path);
+	if (!doc->pdf) {
 		doc_close(doc);
 		return NULL;
 	}

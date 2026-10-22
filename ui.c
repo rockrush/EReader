@@ -10,6 +10,7 @@
 
 #include "ereader.h"
 #include "draw.h"
+#include "font.h"
 
 extern int bpp;
 
@@ -61,59 +62,16 @@ static void fill_circle(int cx, int cy, int rad, unsigned r, unsigned g, unsigne
 /* 填充圆角矩形 */
 static void fill_round_rect(int x, int y, int w, int h, int rad, unsigned r, unsigned g, unsigned b)
 {
-	if (w < 2 * rad)
-		rad = w / 2;
-	if (h < 2 * rad)
-		rad = h / 2;
-	if (rad < 1)
-		rad = 1;
+	int _rad = (rad < 1) ? 1 : ((h < 2 * rad) ? h / 2 : rad);
+	if (w < 2 * _rad)
+		_rad = w / 2;
+
 	fill_rect(x + rad, y, w - 2 * rad, h, r, g, b);
 	fill_rect(x, y + rad, w, h - 2 * rad, r, g, b);
 	fill_circle(x + rad, y + rad, rad, r, g, b);
-	fill_circle(x + w - 1 - rad, y + rad, rad, r, g, b);
-	fill_circle(x + rad, y + h - 1 - rad, rad, r, g, b);
-	fill_circle(x + w - 1 - rad, y + h - 1 - rad, rad, r, g, b);
-}
-
-/* 点是否落在圆角矩形内（rad 为圆角半径） */
-static int in_round_rect(int x, int y, int rx, int ry, int w, int h, int rad)
-{
-	int dx = 0, dy = 0;
-
-	if (x < rx + rad)
-		dx = rx + rad - x;
-	else if (x > rx + w - 1 - rad)
-		dx = x - (rx + w - 1 - rad);
-	if (y < ry + rad)
-		dy = ry + rad - y;
-	else if (y > ry + h - 1 - rad)
-		dy = y - (ry + h - 1 - rad);
-	return dx * dx + dy * dy <= rad * rad;
-}
-
-/* 圆角矩形边框：只画 thick 像素宽的边框，不覆盖框内已有内容 */
-static void fill_round_frame(int x, int y, int w, int h, int rad, int thick,
-			     unsigned r, unsigned g, unsigned b)
-{
-	int i, j;
-
-	if (thick < 1)
-		thick = 1;
-	if (w < 2 * rad)
-		rad = w / 2;
-	if (h < 2 * rad)
-		rad = h / 2;
-	if (rad < 1)
-		rad = 1;
-	if (w <= 2 * thick || h <= 2 * thick)
-		return;
-	for (i = y; i < y + h; i++)
-		for (j = x; j < x + w; j++)
-			if (in_round_rect(j, i, x, y, w, h, rad) &&
-			    !in_round_rect(j, i, x + thick, y + thick,
-					   w - 2 * thick, h - 2 * thick,
-					   MAX(1, rad - thick)))
-				px(j, i, r, g, b);
+	fill_circle(x + w - rad, y + rad, rad, r, g, b);
+	fill_circle(x + rad, y + h - rad, rad, r, g, b);
+	fill_circle(x + w - rad, y + h - rad, rad, r, g, b);
 }
 
 /* 画粗线（Bresenham，每点画一个小方块） */
@@ -138,28 +96,6 @@ static void draw_thick_line(int x0, int y0, int x1, int y1, int thick, unsigned 
 	}
 }
 
-/* 带边框的圆角按钮 */
-static void draw_button(int x, int y, int w, int h)
-{
-	int rad = h / 5;
-	int thick = MAX(1, h / 20);
-	if (rad < 2)
-		rad = 2;
-	fill_round_rect(x, y, w, h, rad, UI_BORDER, UI_BORDER, UI_BORDER);
-	fill_round_rect(x + thick, y + thick, w - 2 * thick, h - 2 * thick, MAX(1, rad - thick), UI_BG, UI_BG, UI_BG);
-}
-
-/* 左/右箭头：dir = -1 左，+1 右 */
-static void draw_arrow(int cx, int cy, int w, int h, int dir)
-{
-	int thick = MAX(1, h / 10);
-	int tip = cx + dir * w / 4;
-	int base = cx - dir * w / 4;
-	draw_thick_line(base, cy, tip, cy, thick, UI_ICON);
-	draw_thick_line(tip, cy, tip - dir * w / 7, cy - h / 4, thick * 5 / 7, UI_ICON);
-	draw_thick_line(tip, cy, tip - dir * w / 7, cy + h / 4, thick * 5 / 7, UI_ICON);
-}
-
 /* 画圆弧（a0 -> a1 弧度，屏幕坐标 y 向下；自动处理环绕） */
 static void draw_arc(int cx, int cy, int r, float a0, float a1, int thick, unsigned cr, unsigned cg, unsigned cb)
 {
@@ -173,35 +109,60 @@ static void draw_arc(int cx, int cy, int r, float a0, float a1, int thick, unsig
 	}
 }
 
-static void draw_go(int cx, int cy, int w, int h, int8_t dir)	// dir：左为1，右为-1
+/* 带边框的圆角按钮: 起点的屏幕横、纵坐标，按钮宽度、高度 */
+static void draw_button(int x, int y, int w, int h)
 {
-	int thick = MAX(1, h / 10);
-	int pad = thick * 3;
-	draw_thick_line(cx, cy + dir * (h / 2 - pad), cx - w / 2 + pad * 2, cy - dir * (h / 2 - pad), thick, UI_ICON);
-	draw_thick_line(cx, cy + dir * (h / 2 - pad), cx + w / 2 - pad * 2, cy - dir * (h / 2 - pad), thick, UI_ICON);
+	int rad = (w > 10) ? h / 5 : 2;
+	int thick = w / 15;
+	fill_round_rect(x, y, h, w, rad, UI_BORDER, UI_BORDER, UI_BORDER);
+	fill_round_rect(x + thick, y + thick, h - 2 * thick, w - 2 * thick, MAX(1, rad - thick), UI_BG, UI_BG, UI_BG);
+}
+
+/* 左/右箭头：dir = -1 左，+1 右 */
+static void draw_arrow(int x, int y, int w, int h, int dir)
+{
+	int x_pad = h / 4;	// 横向留空
+	int cy = y + w / 2;	// 按钮中线纵坐标
+	int thick = MAX(1, w / 12);	// 线条粗细
+	int tip  = x + x_pad + ((dir > 0) ? 0 : (h / 2));	// 箭头横坐标
+	int base = x + x_pad + ((dir < 0) ? 0 : (h / 2));	// 起点横坐标
+
+	draw_thick_line(base, cy, tip, cy, thick, UI_ICON);
+	draw_thick_line(tip, cy, tip + dir * h / 5, cy - w / 4, thick * 5 / 7, UI_ICON);
+	draw_thick_line(tip, cy, tip + dir * h / 5, cy + w / 4, thick * 5 / 7, UI_ICON);
+}
+
+static void draw_go(int x, int y, int w, int h, int8_t dir)	// dir：左为1，右为-1
+{
+	int thick = MAX(1, w / 15);	// 线条粗细
+	int x_pad = h / 3, y_pad = w / 3;
+	int ys = (dir > 0) ? (y + y_pad) : (y + w - y_pad);
+	int ye = (dir > 0) ? (y + w - y_pad) : (y + y_pad);
+
+	draw_thick_line(x + x_pad, ys, x + h / 2, ye, thick, UI_ICON);
+	draw_thick_line(x + h / 2, ye, x + h - x_pad, ys, thick, UI_ICON);
 }
 
 /* 刷新：顶部留缺口的圆环 + 末端箭头（顺时针） */
-static void draw_refresh(int cx, int cy, int h)
+static void draw_refresh(int x, int y, int w, int h)
 {
-	int thick = MAX(1, h / 16);
-	int r = h * 3 / 8;
-	float gap = 0.5f;
-	float a0 = M_PI * 1.5f - gap;
-	float a1 = M_PI * 1.5f + gap;
-	int ex = cx + (int) (r * cosf(a0));
-	int ey = cy + (int) (r * sinf(a0));
-	draw_arc(cx, cy, r, a1, a0 + 2 * M_PI, thick, UI_ICON, UI_ICON, UI_ICON);
-	draw_thick_line(ex, ey, ex - r / 2, ey, h / 12, UI_ICON);
+	int thick = MAX(1, w / 27);
+	int r = w / 4;
+	float a0 = M_PI * 1.5f - 0.5f;
+	float a1 = M_PI * 1.5f + 0.5f;
+	int ex = x + h / 2 + (int) (r * cosf(a0));
+	int ey = y + w / 2 + (int) (r * sinf(a0));
+	draw_arc(x + h / 2, y + w / 2, r, a1, a0 + 2 * M_PI, thick, UI_ICON, UI_ICON, UI_ICON);
+	draw_thick_line(ex, ey, ex - r / 2, ey, w / 12, UI_ICON);
 }
 
 /* 开关：顶部开口的圆环 + 贯穿缺口的竖线 */
-static void draw_power(int cx, int cy, int h)
+static void draw_power(int x, int y, int w, int h)
 {
-	int thick = MAX(1, h / 16);
-	int r = h * 3 / 8;
-	draw_arc(cx, cy, r, M_PI + 0.5f, 3 * M_PI - 0.5f, thick, UI_ICON, UI_ICON, UI_ICON);
-	draw_thick_line(cx - r, cy, cx + h / 8, cy, h / 10, UI_ICON);
+	int thick = MAX(1, w / 27);
+	int r = w / 4;
+	draw_arc(x + h / 2, y + w / 2, r, M_PI + 0.6f, 3 * M_PI - 0.6f, thick, UI_ICON, UI_ICON, UI_ICON);
+	draw_thick_line(x + h / 2 - r, y + w / 2, x + h / 2 + r / 2, y + w / 2, w / 12, UI_ICON);
 }
 
 /* WiFi 徽标：以 (cx, cy) 为中心画边长为 size 的圆角正方形黑框，
@@ -214,8 +175,10 @@ static void draw_wifi(int cx, int cy, int size, int8_t level)
 	int dot = cy + (top - thick) / 2;	/* 让图标在正方形框内垂直居中 */
 	int k, r;
 
-	fill_round_frame(cx - size / 2, cy - size / 2, size, size,
-			 MAX(2, size / 6), thick, 0, 0, 0);
+	fill_round_rect(cx - size / 2 + thick, cy - size / 2 + thick, size - 2 * thick, size - 2 * thick, size / 6, UI_BORDER, UI_BORDER, UI_BORDER);
+	fill_round_rect(cx - size / 2 + 2 * thick, cy - size / 2 + 2 * thick, size - 4 * thick, size - 4 * thick, size / 6, UI_SHADOW, UI_SHADOW, UI_SHADOW);
+
+	//fill_round_frame(cx - size / 2 + thick, cy - size / 2 + thick, size - 2 * thick, size - 2 * thick, MAX(2, size / 6), thick, 0, 0, 0);
 	if (level < 0)
 		return;	// 无信号，只留空框
 	fill_circle(cx, dot, thick, UI_ICON, UI_ICON, UI_ICON);
@@ -235,27 +198,17 @@ static void draw_wifi(int cx, int cy, int size, int8_t level)
 static void draw_battery(int x, int cy, int w, int h, int pct)
 {
 	int y = cy - h / 2;
-	int rad = h / 5;
-	int thick = MAX(1, h / 12);
+	int rad = h / 5, thick = h / 12;
 	int inset = thick + h / 10;
-	int nub_w = MAX(2, w / 12);
-	int fill_w;
-	if (rad < 1)
-		rad = 1;
-	fill_round_rect(x, y, w, h, rad, UI_BORDER, UI_BORDER, UI_BORDER);
-	fill_round_rect(x + thick, y + thick, w - 2 * thick, h - 2 * thick,
-			MAX(1, rad - thick), UI_BG, UI_BG, UI_BG);
-	fill_rect(x + w, cy - h / 4, nub_w, h / 2, UI_BORDER, UI_BORDER, UI_BORDER);
-	fill_w = (w - 2 * inset) * pct / 100;
-	if (fill_w < 0)
-		fill_w = 0;
-	if (fill_w > w - 2 * inset)
-		fill_w = w - 2 * inset;
-	fill_rect(x + inset, y + inset, fill_w, h - 2 * inset, UI_ICON, UI_ICON, UI_ICON);
+	int nub_w = cfg.ui_w / 6;	// 电极高度
+	fill_rect(x, cy - h / 4, nub_w, h / 2, UI_BORDER, UI_BORDER, UI_BORDER);
+	fill_round_rect(nub_w + x, y, w - nub_w, h, rad, UI_BORDER, UI_BORDER, UI_BORDER);
+	fill_round_rect(nub_w + x + thick, y + thick, w - nub_w - 2 * thick, h - 2 * thick, MAX(1, rad - thick), UI_BG, UI_BG, UI_BG);
+	fill_rect(nub_w + x + inset, y + inset, (w - nub_w - 2 * inset) * pct / 100, h - 2 * inset, UI_ICON, UI_ICON, UI_ICON);
 }
 
 /* 读取电池电量百分比，失败返回 100 */
-static int read_battery_pct(void)
+static int battery_pct(void)
 {
 	DIR *dir;
 	struct dirent *de;
@@ -318,99 +271,65 @@ static int8_t wifi_level(void) {
 		return 3;
 }
 
-/* 竖排时间的方格边长与列间距；返回整体宽度，状态栏太矮时返回 0 */
-static int time_geom(int height, int *cell_out, int *gap_out)
-{
-	int cell = height / 5;	/* 最长一列 5 个字符（月-日、时:分） */
-
-	if (cell < 6)
-		return 0;
-	*cell_out = cell;
-	*gap_out = MAX(1, cell / 4);
-	return 3 * cell + 2 * *gap_out;
-}
-
 /* 状态栏时间：年 / 月-日 / 时:分 三列竖排，字符逆时针旋转 90°（自底向上书写）。
  * 整体右对齐到 right，返回占用宽度（放不下时为 0） */
-static int draw_time(int right, int top, int height)
+static void draw_time(void)
 {
+	struct tm tm;
 	char cols[3][16];
 	time_t now = time(NULL);
-	struct tm tm;
-	int i, n, cell, gap, x, w, y0;
 
-	w = time_geom(height, &cell, &gap);
-	if (!w || !localtime_r(&now, &tm))
-		return 0;
+	if (!localtime_r(&now, &tm))
+		return;
 	snprintf(cols[0], sizeof(cols[0]), "%04d", tm.tm_year + 1900);
 	snprintf(cols[1], sizeof(cols[1]), "%02d-%02d", tm.tm_mon + 1, tm.tm_mday);
 	snprintf(cols[2], sizeof(cols[2]), "%02d:%02d", tm.tm_hour, tm.tm_min);
-	x = right - w;
-	for (i = 0; i < 3; i++) {
-		n = (int) strlen(cols[i]);
+
+	int cell = cfg.ui_w / 5;	/* 最长一列 5 个字符（月-日、时:分） */
+	int y = cfg.scr_w - cfg.ui_w;
+
+	fill_rect(cfg.scr_w - cfg.ui_w, cfg.view_w, cfg.ui_w, cfg.ui_w, UI_SHADOW, UI_SHADOW, UI_SHADOW);
+	for (int i = 0; i < 3; i++) {
+		int n = (int) strlen(cols[i]);
 		/* 各列在高度内居中，再从最下方字符开始向上写 */
-		y0 = top + (height - n * cell) / 2 + (n - 1) * cell;
-		fm_text_btt(x, y0, cols[i], (size_t) n, cell * 4 / 3, cell,
-			    UI_ICON, UI_ICON, UI_ICON);
-		x += cell + gap;
+		int x0 = -cfg.ui_w + (cfg.ui_w - n * cell) / 2;
+		text(x0, y, cols[i], 8 * FBM_FONT_SCALE, UI_ICON, UI_ICON, UI_ICON);
+		y += cell + (cfg.ui_w - 3 * cell) / 2;
 	}
-	return w;
 }
 
-/* 在空白区域（顶部行 gtop）绘制状态图标与按钮 */
+/* 绘制状态图标与按钮 */
 void *draw_ui(void *arg)
 {
-	int *height = (int *)arg;
-	int gtop = cfg.scr_h - *height;
-	int gh, bar_h, bar_top, pad = 2;
+	if (!cfg.ui_w)	// 页面填满屏幕，无空白区域
+		return NULL;
+	int btn_gap = cfg.ui_w * 2 / 3;	// 按钮间隔
+	int btn_h = cfg.ui_w * 3 / 2;	// 按钮高度
 
-	if (gtop < 0)
-		gtop = 0;
-	if (gtop >= cfg.scr_h)
-		return NULL;			/* 页面填满屏幕，无空白区域 */
-	gh = cfg.scr_h - gtop;
-	if (gh < 32)
-		return NULL;			/* 空白区域太小，不绘制 */
+	fill_rect(0, cfg.view_w, cfg.ui_h, cfg.ui_w, UI_SHADOW, UI_SHADOW, UI_SHADOW);
 
-	bar_h = gh - pad * 2;
-	bar_top = cfg.scr_h - bar_h - pad;
+	// 仅触屏版需要显示按钮
+	for (int i = 0; i < 6; i++) {
+		int x = btn_gap / 2 + i * (btn_h + btn_gap);	// 最左边留半个 gap
+		draw_button(x, cfg.view_w, cfg.ui_w, btn_h);
 
-	/* 时间竖排需要字体；拿不到就只画图标 */
-	if (fm_font_acquire())
-		fprintf(stderr, "status bar: cannot load font, no clock\n");
-
-	while (true) {
-		fill_rect(0, cfg.scr_h - cfg.ui_h, cfg.scr_w, cfg.ui_h, GRAY, GRAY, GRAY);
-		// 从左往右
-		int gap = 50;
-		int width = bar_h + bar_h / 2;
-		for (int i = 0; i < 6; i++) {
-			int x = gap / 2 + i * (gap + width);
-			int cx = x + width / 2, cy = bar_top + bar_h / 2;
-			int s = width / 3;
-			if (s < 2)
-				s = 2;
-			draw_button(x, bar_top, width, bar_h);
-			switch (i) {
-			case 0: draw_arrow(cx, cy, width, bar_h, -1); break;	/* 上一页 */
-			case 1: draw_arrow(cx, cy, width, bar_h, +1); break;	/* 下一页 */
-			case 2: draw_go(cx, cy, width, bar_h, -1); break;/* 确认 */
-			case 3: draw_go(cx, cy, width, bar_h, 1); break;/* 返回 */
-			case 4: draw_refresh(cx, cy, bar_h); break;	/* 刷新 */
-			case 5: draw_power(cx, cy, bar_h); break;	/* 开关 */
-			}
+		switch (i) {
+		case 0: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, -1); break;	/* 上一页 */
+		case 1: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, +1); break;	/* 下一页 */
+		case 2: draw_go(x, cfg.view_w, cfg.ui_w, btn_h, -1); break;	/* 确认 */
+		case 3: draw_go(x, cfg.view_w, cfg.ui_w, btn_h, +1); break;	/* 返回 */
+		case 4: draw_refresh(x, cfg.view_w, cfg.ui_w, btn_h); break;	/* 刷新 */
+		case 5: draw_power(x, cfg.view_w, cfg.ui_w, btn_h); break;	/* 开关 */
 		}
+	}
 
-		/* 靠右依次为 电量、WiFi、时间，时间贴最右边 */
-		int cy = bar_top + bar_h / 2;
-		int t_right = cfg.scr_w - gap / 4;
-		int t_w = draw_time(t_right, bar_top, bar_h);
-		int wifi_x = (t_w ? t_right - t_w : t_right) - bar_h / 2 - gap / 3;
-		int bat_x = wifi_x - bar_h / 2 - bar_h * 2 - gap / 3;
+	while (true) {	/* 靠右依次为 电量、WiFi、时间，时间贴最右边 */
+		draw_time();	// 固定在右下角
 
-		draw_battery(bat_x, cy, bar_h * 2, bar_h * 4 / 5, read_battery_pct());
-		draw_wifi(wifi_x, cy, bar_h, wifi_level());
-		sleep(2);
+		int cy = cfg.view_w + cfg.ui_w / 2;
+		draw_wifi(cfg.scr_w - 2 * cfg.ui_w + cfg.ui_w / 2, cy, cfg.ui_w, wifi_level());
+		draw_battery(cfg.scr_w - 4 * cfg.ui_w, cy, cfg.ui_w * 2, cfg.ui_w * 4 / 5, battery_pct());
+		sleep(TIME_PERIOD);
 	}
 	return NULL;
 }

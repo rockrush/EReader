@@ -4,7 +4,9 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "ereader.h"
 #include "draw.h"
+#include "font.h"
 
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
 #define TX_CHUNK	(64 << 10)	/* 增量读取的起始块大小 */
@@ -26,16 +28,14 @@ struct tx_view {
 	int top;	/* 顶部显示行号 */
 };
 
-static uint16_t tx_w, tx_h;
-
 static int tx_line_h(void)
 {
-	return MAX(1, fm_line_height(TX_PX)) + 2 * FBM_FONT_SCALE;
+	return MAX(1, font_line_height(TX_PX)) + 2 * FBM_FONT_SCALE;
 }
 
 static int tx_visible(void)
 {
-	int visible = (tx_h - 12 * FBM_FONT_SCALE) / tx_line_h();
+	int visible = (cfg.view_h - 12 * FBM_FONT_SCALE) / tx_line_h();
 	return MAX(1, visible);
 }
 
@@ -63,9 +63,9 @@ static size_t tx_fit(const char *s, size_t len, int avail)
 
 	while (pos < len) {
 		const char *p = s + pos;
-		unsigned int cp = fm_utf8(&p);
+		unsigned int cp = font_utf8(&p);
 		size_t n = (size_t) (p - (s + pos));
-		int cw = fm_advance(cp, TX_PX);
+		int cw = font_advance(cp, TX_PX);
 
 		if (pos > 0 && w + cw > avail)
 			return last ? last : pos;
@@ -203,7 +203,7 @@ static char *tx_load(const char *path, size_t *size)
 			col++;
 		} else {
 			const char *p = in + i;
-			unsigned int cp = fm_utf8(&p);
+			unsigned int cp = font_utf8(&p);
 			size_t nb = (size_t) (p - (in + i));
 
 			if (nb > 1) {
@@ -223,42 +223,32 @@ static char *tx_load(const char *path, size_t *size)
 	return out;
 }
 
-/* 绘制 len 字节的文本（UTF-8），返回绘制后的横向位置 */
-static int tx_text(int x, int y, const char *s, size_t len, unsigned r, unsigned g, unsigned b)
-{
-	return fm_text_n(x, y, s, len, TX_PX, r, g, b);
-}
-
 static void tx_draw(struct tx_view *v)
 {
 	int pad = 6 * FBM_FONT_SCALE;
 	int line_h = tx_line_h();
 	int visible = tx_visible();
 
-	fill_rect(0, 0, tx_h, tx_w, 255, 255, 255);
+	fill_rect(0, 0, cfg.view_h, cfg.view_w, 255, 255, 255);
 	for (int i = 0; i < visible && v->top + i < v->n; i++) {
 		const struct tx_line *ln = &v->lines[v->top + i];
-		tx_text(pad, pad + i * line_h, v->text + ln->off, ln->len, UI_ICON, UI_ICON, UI_ICON);
+		text_n(pad, pad + i * line_h, v->text + ln->off, ln->len, TX_PX, UI_ICON, UI_ICON, UI_ICON);
 	}
 }
 
 /* 文本阅读器：j/k 上下翻半屏，q 退出 */
-int show_text(const char *path, uint16_t w, uint16_t h)
+int show_text(const char *path)
 {
 	struct tx_view v;
 	int c, step, visible, maxtop, retval = EXIT_FAILURE;
 
-	tx_w = h;
-	tx_h = w;
 	memset(&v, 0, sizeof(v));
-	if (fm_font_acquire())
-		return EXIT_FAILURE;
 	v.text = tx_load(path, &v.size);
 	if (!v.text) {
 		fprintf(stderr, "cannot open <%s>\n", path);
 		goto out;
 	}
-	if (tx_format(&v, tx_w - 12 * FBM_FONT_SCALE))
+	if (tx_format(&v, cfg.view_w - 12 * FBM_FONT_SCALE))
 		goto out;
 	visible = tx_visible();
 	maxtop = MAX(0, v.n - visible);
@@ -285,6 +275,5 @@ int show_text(const char *path, uint16_t w, uint16_t h)
 out:
 	free(v.lines);
 	free(v.text);
-	fm_font_release();
 	return retval;
 }

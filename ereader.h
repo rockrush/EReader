@@ -3,13 +3,16 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define GRAY	128	// 屏幕空白处的灰色填充
-
 struct ereader_cfg {
-	uint16_t scr_w;
+	union {
+		uint16_t scr_w;	// 屏幕宽度
+		uint16_t view_h;// 正文区高度
+		uint16_t ui_h;	// UI区高度
+	};
 	uint16_t scr_h;
-	uint8_t ui_h;
-	int32_t rotate;
+	uint16_t view_w;	// 正文区宽度
+	uint16_t ui_w;		// UI区宽度
+	uint8_t running;	// 继续运行
 	char path[PATH_MAX];	// 当前处理路径
 };
 

@@ -9,22 +9,18 @@
 #include "draw.h"
 #include "ereader.h"
 
-struct ereader_cfg cfg = {
-	.scr_w = 800,
-	.scr_h = 600,
-	.ui_h = 0,
-	.rotate = 270,	// 固定旋转 270 度
-};
+struct ereader_cfg cfg;
 
 int bpp;	// bytes per pixel
 int cur_page;	// 当前页码
 
 void graph_mode(bool state);
-void fm_set_view(uint16_t w, uint16_t h);
+int font_load(void);
+void font_close(void);
 void *draw_ui(void *arg);
-int show_text(const char *path, uint16_t w, uint16_t h);
-int show_pdf(char *path, uint16_t w, uint16_t h);
-int show_filemgr(char *path, uint16_t w, uint16_t h);
+int show_text(const char *path);
+int show_pdf(char *path);
+int show_filemgr(char *path);
 
 /* 粗略判断文本文件：前 4KB 无 NUL 字节，且至少九成是可打印字符 */
 int is_text(const char *path)
@@ -64,13 +60,17 @@ static void ebook(void) {
 	if (!realpath(cfg.path, tmp_path))
 		strncpy(tmp_path, "/", 2);
 
-	if (cfg.ui_h)
-		if (pthread_create(&th_ui, NULL, draw_ui, &cfg.ui_h) != 0) {
+	if (font_load()) {
+		perror("loading fonts");
+		return;
+	}
+	if (cfg.ui_w)
+		// TODO: pthread_join
+		if (pthread_create(&th_ui, NULL, draw_ui, NULL) != 0) {
 			perror("creating UI thread");
 			return;
 		}
 
-	fm_set_view(cfg.scr_w, cfg.scr_h - cfg.ui_h);
 	while (true) {
 		if (!tmp_path[0])
 			strncpy(tmp_path, "/", 2);
@@ -79,23 +79,24 @@ static void ebook(void) {
 		if (stat(tmp_path, &st) != 0)	// 读不了：不存在或没权限
 			goto _parent;
 		if (S_ISDIR(st.st_mode)) {
-			show_filemgr(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
+			show_filemgr(tmp_path);
 			goto _parent;
 		} else if (!S_ISREG(st.st_mode))
 			goto _parent;
 
 		if (is_pdf(base)) {
-			show_pdf(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
+			show_pdf(tmp_path);
 			goto _parent;
 		}
 
 		// TODO: 其他文件格式
 
 		if (is_text(tmp_path))
-			show_text(tmp_path, cfg.scr_w, cfg.scr_h - cfg.ui_h);
+			show_text(tmp_path);
 _parent:
 		base[0] = 0;
 	}
+	font_close();
 }
 
 static void sigcont(int sig) {
@@ -103,6 +104,7 @@ static void sigcont(int sig) {
 }
 static void sigint(int sig) {
 	graph_mode(false);
+	font_close();
 	fb_free();
 	exit(EXIT_FAILURE);
 }
@@ -122,14 +124,14 @@ int main(int argc, char *argv[])
 	}
 	fy_document_destroy(fyd);
 
-	if (fb_init("/dev/fb0"))
+	if (fb_init("/dev/fb0"))	// 设置 scr_h、scr_w
 		return 1;
-	cfg.scr_h = fb_rows();
-	cfg.scr_w = fb_cols();
-	cfg.ui_h = cfg.scr_h - cfg.scr_w * 210 / 297 - 1;
-	if (cfg.ui_h < 32)
-		cfg.ui_h = 0;
-	bpp = FBM_BPP(fb_mode());
+	cfg.ui_w = cfg.scr_h - cfg.scr_w * 210 / 297;	// A4 幅面剩余部分显示UI
+	if (cfg.ui_w < 32)
+		cfg.ui_w = 0;
+	cfg.view_w = cfg.scr_h - cfg.ui_w;
+	cfg.running = true;
+	printf("> %d, %d, %d, %d, %d\n", cfg.scr_w, cfg.scr_h, cfg.view_w, cfg.view_h, cfg.ui_w);
 
 	graph_mode(true);
 	signal(SIGCONT, sigcont);
@@ -137,7 +139,6 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, sigint);
 	ebook();
 	graph_mode(false);
-
 	fb_free();
 	return 0;
 }

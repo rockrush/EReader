@@ -10,7 +10,6 @@
 #define MARGIN		1
 #define TRIM_MARGIN	8	// 去白边后内容四周保留的边距（像素）
 
-uint16_t pdf_w, pdf_h;
 int zoom = 280;
 struct doc *doc;
 char *pbuf;		// current page
@@ -27,8 +26,8 @@ void draw(void)
 	int i, j;
 	char gray[4];
 	char *rbuf = malloc(cfg.scr_w * bpp);
-	fb_set(gray, GRAY, GRAY, GRAY);
-	for (i = 0; i < cfg.scr_h - cfg.ui_h; i++) {
+	fb_set(gray, UI_SHADOW, UI_SHADOW, UI_SHADOW);
+	for (i = 0; i < cfg.scr_h - cfg.ui_w; i++) {
 		int cbeg = MAX(scol, pcol);
 		int cend = MIN(scol + cfg.scr_w, pcol + pcols);
 		for (j = 0; j < cfg.scr_w; j++)
@@ -49,11 +48,11 @@ void fitpage(int p)
 	int w, h;
 	if (doc_size(doc, p, &w, &h))
 		return;
-	if ((cfg.rotate / 90) % 2) {	/* 固定 270 度：宽高互换（旋转后页面横向） */
-		int t = w;
-		w = h;
-		h = t;
-	}
+	/* 固定 270 度：宽高互换（旋转后页面横向） */
+	int t = w;
+	w = h;
+	h = t;
+
 	if (w <= 0 || h <= 0)
 		return;
 	zoom = cfg.scr_w * 100 / w;
@@ -182,7 +181,7 @@ int renderpage(int p)
 	char *dst;
 
 	fitpage(p);
-	buf = doc_draw(doc, p, zoom, cfg.rotate, bpp, &prows, &pcols);
+	buf = doc_draw(doc, p, zoom, bpp, &prows, &pcols);
 	if (!buf)
 		return 1;
 	if (content_bbox(buf, prows, pcols, bpp, &cx0, &cy0, &cx1, &cy1))
@@ -274,15 +273,13 @@ int reload(char *path)
 	return 0;
 }
 
-int show_pdf(char *path, uint16_t w, uint16_t h)
+int show_pdf(char *path)
 {
 	int c, retval = EXIT_FAILURE;
 	if (!path || !strlen(path)) {	// 此时显示文件管理器
 		fprintf(stderr, "no PDF file specified\n");
 		goto fail_file;
 	}
-	pdf_w = h;
-	pdf_h = w;
 	doc = doc_open(path);
 	if (!doc || !doc_pages(doc)) {
 		fprintf(stderr, "cannot open <%s>\n", path);
@@ -292,11 +289,11 @@ int show_pdf(char *path, uint16_t w, uint16_t h)
 	if ((cur_page < 1) || (cur_page > doc_pages(doc)))
 		cur_page = 1;
 	loadpage(cur_page);
-	scol = -w / 2;
+	scol = - cfg.view_h / 2;
 	draw();
 
 	while ((c = readkey()) != -1) {
-		printf("show_pdf: %d, %d, %d, %d\n", prows, pcols, pdf_w, pdf_h);
+		printf("show_pdf: %d, %d\n", prows, pcols);
 		switch (c) {
 		case 'q':	// 退出
 			goto fail_file;

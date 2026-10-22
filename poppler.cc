@@ -6,7 +6,8 @@
 #include <poppler/cpp/poppler-page-renderer.h>
 
 extern "C" {
-void fb_set(char *d, unsigned r, unsigned g, unsigned b);
+#include "ereader.h"
+#include "draw.h"
 
 struct doc {
 	union {
@@ -28,14 +29,26 @@ int doc_size(struct doc *doc, int p, int *width, int *height)
 	return 0;
 }
 
-void *doc_draw(struct doc *doc, int p, int zoom, int bpp, int *rows, int *cols)
+void *doc_draw(struct doc *doc, int p, int bpp, int *rows, int *cols)
 {
 	poppler::page *page = doc->pdf->create_page(p - 1);
 	poppler::page_renderer pr;
+	poppler::rectf r;
 	int x, y;
 	int h, w;
 	char *pbuf;
 	unsigned char *dat;
+
+	if (!page)
+		return NULL;
+	r = page->page_rect();
+
+	int pw = (int)(r.height() + 0.5);
+	if (pw <= 0)
+		return NULL;
+	int zoom = cfg.scr_w * 100 / pw;
+	zoom = MIN(1000, MAX(1, zoom));
+
 	pr.set_render_hint(poppler::page_renderer::antialiasing, true);
 	pr.set_render_hint(poppler::page_renderer::text_antialiasing, true);
 	poppler::image img = pr.render_page(page, (float) 72 * zoom / 100,

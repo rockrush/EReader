@@ -10,7 +10,6 @@
 #define MARGIN		1
 #define TRIM_MARGIN	8	// 去白边后内容四周保留的边距（像素）
 
-int zoom = 280;
 struct doc *doc;
 char *pbuf;		// current page
 int prows, pcols;	// current page dimensions
@@ -18,8 +17,6 @@ int pcol;		// page position
 int scol;		// screen position
 extern int bpp;
 extern int cur_page;
-
-void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 void draw(void)
 {
@@ -40,23 +37,6 @@ void draw(void)
 		memcpy(fb_mem(i), rbuf, cfg.scr_w * bpp);
 	}
 	free(rbuf);
-}
-
-/* 满宽渲染，保证去白边后仍有足够分辨率 */
-void fitpage(int p)
-{
-	int w, h;
-	if (doc_size(doc, p, &w, &h))
-		return;
-	/* 固定 270 度：宽高互换（旋转后页面横向） */
-	int t = w;
-	w = h;
-	h = t;
-
-	if (w <= 0 || h <= 0)
-		return;
-	zoom = cfg.scr_w * 100 / w;
-	zoom = MIN(1000, MAX(1, zoom));
 }
 
 /* 检测页面内容（非纯白像素）的包围盒，返回是否找到内容 */
@@ -180,8 +160,7 @@ int renderpage(int p)
 	int tw, th;
 	char *dst;
 
-	fitpage(p);
-	buf = doc_draw(doc, p, zoom, bpp, &prows, &pcols);
+	buf = doc_draw(doc, p, bpp, &prows, &pcols);
 	if (!buf)
 		return 1;
 	if (content_bbox(buf, prows, pcols, bpp, &cx0, &cy0, &cx1, &cy1))

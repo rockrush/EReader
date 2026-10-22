@@ -1,13 +1,13 @@
-CFLAGS = -Wall -O2 -Wunused -Wunused-function $(shell pkg-config --cflags fontconfig)
+CFLAGS = -Wall -O2 -Wunused -Wunused-function
 LDFLAGS = $(shell pkg-config --libs libfyaml freetype2 fontconfig poppler-cpp)
 SRCS=$(wildcard *.c)
-OBJS=${SRCS:.c=.o}
+OBJS=${SRCS:.c=.o} poppler.o
 
 %.o: %.c doc.h
-	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags freetype2) $<
+	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags freetype2 fontconfig) $<
 
-ereader: poppler.cc $(OBJS)
-	$(CXX) $(CFLAGS) -o $@ $^ $(FC_LIBS) $(shell pkg-config --cflags poppler-cpp) $(LDFLAGS)
+ereader: $(OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
 .PHONY: clean count
 clean:

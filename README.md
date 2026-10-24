@@ -1,6 +1,11 @@
-A framebuffer ebook viewer.
+## An ebook viewer on E-paper
+![10.3 Inch EPD + Radxa Zero](doc/demo.jpg)
 
-Build dependencies (detected via pkg-config):
+**Hardware**: 10.3 inch 16-grayscale EPD display with Radxa Zero
+
+**Software**: Debian Bullseye
+
+**Build dependencies**:
 - poppler-cpp (PDF rendering)
 - sqlite3     (libsqlite3-dev; configuration database)
 - freetype2   (file manager text)
@@ -27,15 +32,20 @@ uses 12 px text and the text reader uses 10 px text (`FBM_FONT_SCALE` scales
 both for the target screen).
 
 File manager keys:
-- e  enter the selected folder, open the selected PDF, or read a text file
-- q  go to the parent folder
-- j  select the next entry
-- k  select the previous entry
+- e -- enter the selected folder, open the selected PDF, or read a text file
+- q -- go to the parent folder
+- j -- select the next entry
+- k -- select the previous entry
 
 Text reader keys:
-- j  scroll down half a screen
-- k  scroll up half a screen
-- q  close the text reader
+- j -- scroll down half a screen
+- k -- scroll up half a screen
+- q -- close the text reader
+
+PDF reader keys:
+- j -- next page
+- k -- previous page
+- q -- close the PDF reader
 
 Like the PDF view, the file manager shows the status bar (page buttons, clock,
 battery, WiFi) along the bottom edge of the framebuffer. The right edge holds,

@@ -1,5 +1,5 @@
 CFLAGS = -Wall -O2 -Wunused -Wunused-function $(shell pkg-config --cflags fontconfig sqlite3)
-LDFLAGS = $(shell pkg-config --libs sqlite3 freetype2 fontconfig poppler-cpp)
+LDFLAGS = $(shell pkg-config --libs sqlite3 freetype2 fontconfig poppler-cpp) -pthread
 SRCS=$(wildcard *.c)
 OBJS=${SRCS:.c=.o}
 

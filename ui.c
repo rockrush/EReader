@@ -238,7 +238,6 @@ static int battery_pct(void)
 }
 
 static int8_t wifi_level(void) {
-	return 2;
 	char line[256];
 	int link = 0, level = -100, noise = 0, line_no = 0;
 	FILE *fp = fopen("/proc/net/wireless", "r");

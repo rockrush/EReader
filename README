@@ -2,9 +2,15 @@ A framebuffer ebook viewer.
 
 Build dependencies (detected via pkg-config):
 - poppler-cpp (PDF rendering)
-- libfyaml    (ereader.yml parsing)
+- sqlite3     (libsqlite3-dev; configuration database)
 - freetype2   (file manager text)
 - fontconfig  (optional, used to pick system fonts)
+
+Configuration and reading positions are stored in `ereader.db`, created in the
+current working directory on first run. It has two tables: `config`, a key/value store
+holding the initial `path`, and `book`, which records each book's path, total
+page count and the page last read. The current page is saved whenever a page is
+loaded successfully.
 
 Run `make` to build. The file manager and the text reader draw UTF-8 text
 using the fonts installed on the system. fontconfig picks the preferred

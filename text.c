@@ -7,6 +7,7 @@
 #include "ereader.h"
 #include "draw.h"
 #include "font.h"
+#include "db.h"
 
 #define TX_MAX_SIZE	(32 << 20)	/* 文本文件读取上限 */
 #define TX_CHUNK	(64 << 10)	/* 增量读取的起始块大小 */
@@ -248,6 +249,7 @@ int show_text(const char *path)
 		fprintf(stderr, "cannot open <%s>\n", path);
 		goto out;
 	}
+	db_set_config("path", path);
 	if (tx_format(&v, cfg.view_w - 12 * FBM_FONT_SCALE))
 		goto out;
 	visible = tx_visible();

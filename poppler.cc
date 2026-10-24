@@ -8,17 +8,15 @@
 extern "C" {
 #include "ereader.h"
 #include "draw.h"
-
-struct doc {
-	union {
-		poppler::document *pdf;
-		void *unknown;
-	};
-};
+#include "doc.h"
+void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 int doc_size(struct doc *doc, int p, int *width, int *height)
 {
-	poppler::page *page = doc->pdf->create_page(p - 1);
+	if (!doc || !doc->hdl)
+		return 1;
+	poppler::document *pdf = (poppler::document *)doc->hdl;
+	poppler::page *page = pdf->create_page(p - 1);
 	poppler::rectf r;
 	if (!page)
 		return 1;
@@ -31,13 +29,14 @@ int doc_size(struct doc *doc, int p, int *width, int *height)
 
 void *doc_draw(struct doc *doc, int p, int bpp, int *rows, int *cols)
 {
-	poppler::page *page = doc->pdf->create_page(p - 1);
-	poppler::page_renderer pr;
-	poppler::rectf r;
 	int x, y;
 	int h, w;
 	char *pbuf;
 	unsigned char *dat;
+	poppler::document *pdf = (poppler::document *)doc->hdl;
+	poppler::page *page = pdf->create_page(p - 1);
+	poppler::page_renderer pr;
+	poppler::rectf r;
 
 	if (!page)
 		return NULL;
@@ -45,6 +44,8 @@ void *doc_draw(struct doc *doc, int p, int bpp, int *rows, int *cols)
 
 	int pw = (int)(r.height() + 0.5);
 	if (pw <= 0)
+
+	if (!doc || !doc->hdl)
 		return NULL;
 	int zoom = cfg.scr_w * 100 / pw;
 	zoom = MIN(1000, MAX(1, zoom));
@@ -74,25 +75,35 @@ void *doc_draw(struct doc *doc, int p, int bpp, int *rows, int *cols)
 
 int doc_pages(struct doc *doc)
 {
-	return doc->pdf->pages();
+	if (!doc || !doc->hdl)
+		return 1;
+	poppler::document *pdf = (poppler::document *)doc->hdl;
+	return pdf->pages();
 }
 
 void doc_close(struct doc *doc)
 {
-	delete doc->pdf;
+	if (!doc || !doc->hdl)
+		return;
+	delete (poppler::document *)doc->hdl;
 	free(doc);
 }
 
-struct doc *doc_open(char *path)
+struct doc *pdf_open(char *path)
 {
 	struct doc *doc = (struct doc *)malloc(sizeof(*doc));
 	if (doc == NULL)
 		return NULL;
-	doc->pdf = poppler::document::load_from_file(path);
-	if (!doc->pdf) {
-		doc_close(doc);
+	poppler::document *pdf = poppler::document::load_from_file(path);
+	if (!pdf) {
+		free(doc);
 		return NULL;
 	}
+	doc->hdl = (void *)pdf;
+	doc->pages = doc_pages;
+	doc->size = doc_size;
+	doc->draw = doc_draw;
+	doc->close = doc_close;
 	return doc;
 }
 }	// extern "C"

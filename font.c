@@ -56,6 +56,7 @@ static int font_face_px[MAX_FACES];	/* 各字体当前设置的字号 */
 static struct font_glyph *font_hash[FM_HASH_SIZE];
 static int font_ascent_px[FM_MAX_PX + 1];	/* 按字号缓存的基线偏移 */
 static int font_height_px[FM_MAX_PX + 1];	/* 按字号缓存的行高 */
+static bool fc_ready;
 
 /* 该字体家族是否已经收录（同一家族另有粗体、斜体等文件） */
 static int list_has_family(const char *family)
@@ -111,8 +112,6 @@ static void env_list(void)
 	free(copy);
 }
 
-static bool fc_ready;
-
 static void fc_add_pattern(const FcPattern *pat)
 {
 	FcChar8 *file, *family = NULL;
@@ -129,7 +128,6 @@ static void fc_add_pattern(const FcPattern *pat)
 static FcPattern *fc_pattern(const char *family)
 {
 	FcPattern *pat = FcPatternCreate();
-
 	if (!pat)
 		return NULL;
 	if (family)
@@ -193,18 +191,14 @@ static const struct script_sample {
 static int fc_pattern_has(const FcPattern *pat, FcChar32 cp)
 {
 	FcCharSet *cs;
-
-	return FcPatternGetCharSet(pat, FC_CHARSET, 0, &cs) == FcResultMatch &&
-	       FcCharSetHasChar(cs, cp);
+	return FcPatternGetCharSet(pat, FC_CHARSET, 0, &cs) == FcResultMatch && FcCharSetHasChar(cs, cp);
 }
 
 /* 标记这款字体已经覆盖的样本，省掉后续重复查询和重复加载。
  * primary_only 为真时只认主字体该负责的常见文字系统 */
 static void fc_mark_covered(const FcPattern *pat, bool *covered, bool primary_only)
 {
-	size_t i;
-
-	for (i = 0; i < NSAMPLES; i++)
+	for (size_t i = 0; i < NSAMPLES; i++)
 		if (!covered[i] && (!primary_only || samples[i].primary) &&
 		    fc_pattern_has(pat, samples[i].cp))
 			covered[i] = true;
@@ -278,8 +272,6 @@ static void fc_add_for_sample(const struct script_sample *sp, bool *covered)
 static void system_list(void)
 {
 	static bool covered[NSAMPLES];
-	size_t i;
-
 	if (!fc_ready)
 		fc_ready = FcInit();
 	if (!fc_ready)
@@ -288,7 +280,7 @@ static void system_list(void)
 	fc_add_family("monospace", true, covered);
 	fc_add_family("sans-serif", false, covered);
 	/* 其余文字系统各挑一款字体作为后备 */
-	for (i = 0; i < NSAMPLES && nfonts < LIST_MAX; i++)
+	for (size_t i = 0; i < NSAMPLES && nfonts < LIST_MAX; i++)
 		if (!covered[i])
 			fc_add_for_sample(&samples[i], covered);
 }
@@ -301,7 +293,6 @@ static pthread_once_t font_lock_once = PTHREAD_ONCE_INIT;
 static void font_lock_init(void)
 {
 	pthread_mutexattr_t attr;
-
 	pthread_mutexattr_init(&attr);
 	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
 	pthread_mutex_init(&font_lock, &attr);
@@ -455,10 +446,8 @@ void blend_px(int x, int y, int a, unsigned r, unsigned g, unsigned b)
 	uint16_t vw = cfg.view_w, vh = cfg.scr_w;
 	int sx = y, sy = vw - 1 - x;	/* 屏幕坐标 */
 
-	if (x < -cfg.ui_w || y < 0 || x >= vw || y >= vh) {
-		printf("blend_px: %d, %d\n", x, y);
+	if (x < -cfg.ui_w || y < 0 || x >= vw || y >= vh)
 		return;
-	}
 	if (a >= 255) {
 		px(sx, sy, r, g, b);
 		return;
@@ -589,7 +578,6 @@ int text(int x, int y, const char *s, int px, unsigned r, unsigned g, unsigned b
 static int font_load_face(const char *path, int index)
 {
 	FT_Face face;
-
 	if (nfaces >= MAX_FACES)
 		return 1;
 	if (FT_New_Face(font_lib, path, index, &face))

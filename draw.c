@@ -107,6 +107,10 @@ int fb_init(char *dev)
 
 	cfg.scr_h = vinfo.yres;
 	cfg.scr_w = vinfo.xres;
+	cfg.ui_w = cfg.scr_h - cfg.scr_w * 210 / 297;	// A4 幅面剩余部分显示UI
+	if (cfg.ui_w < 32)
+		cfg.ui_w = 0;
+	cfg.view_w = cfg.scr_h - cfg.ui_w;
 	return 0;
 failed:
 	perror("fb_init()");

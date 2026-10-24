@@ -19,6 +19,5 @@ struct ereader_cfg {
 extern struct ereader_cfg cfg;
 
 void px(int x, int y, unsigned r, unsigned g, unsigned b);
-void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 #endif

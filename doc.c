@@ -6,6 +6,7 @@
 #include "ereader.h"
 #include "draw.h"
 #include "doc.h"
+#include "db.h"
 
 #define MARGIN		1
 #define TRIM_MARGIN	8	// 去白边后内容四周保留的边距（像素）
@@ -17,6 +18,9 @@ int pcol;		// page position
 int scol;		// screen position
 extern int bpp;
 extern int cur_page;
+static char book_path[PATH_MAX];	// 当前书籍的路径
+
+void fb_set(char *d, unsigned r, unsigned g, unsigned b);
 
 void draw(void)
 {
@@ -236,13 +240,14 @@ int loadpage(int p)
 		return 1;
 	pcol = -pcols / 2;	/* 水平居中 */
 	cur_page = p;
+	db_save_book(book_path, doc_pages(doc), cur_page);
 	return 0;
 }
 
 int reload(char *path)
 {
 	doc_close(doc);
-	doc = doc_open(path);
+	doc = pdf_open(path);
 	if (!doc || !doc_pages(doc)) {
 		fprintf(stderr, "\ncannot open <%s>\n", path);
 		return 1;
@@ -252,19 +257,24 @@ int reload(char *path)
 	return 0;
 }
 
-int show_pdf(char *path)
+int show_doc(char *path)
 {
 	int c, retval = EXIT_FAILURE;
 	if (!path || !strlen(path)) {	// 此时显示文件管理器
 		fprintf(stderr, "no PDF file specified\n");
 		goto fail_file;
 	}
-	doc = doc_open(path);
+	doc = pdf_open(path);
 	if (!doc || !doc_pages(doc)) {
 		fprintf(stderr, "cannot open <%s>\n", path);
 		goto fail_file;
 	}
 
+	strncpy(book_path, path, sizeof(book_path) - 1);
+	book_path[sizeof(book_path) - 1] = 0;
+	db_set_config("path", book_path);
+	if (db_get_book(book_path, NULL, &cur_page))
+		cur_page = 1;
 	if ((cur_page < 1) || (cur_page > doc_pages(doc)))
 		cur_page = 1;
 	loadpage(cur_page);
@@ -272,7 +282,6 @@ int show_pdf(char *path)
 	draw();
 
 	while ((c = readkey()) != -1) {
-		printf("show_pdf: %d, %d\n", prows, pcols);
 		switch (c) {
 		case 'q':	// 退出
 			goto fail_file;
@@ -301,7 +310,7 @@ fail_file:
 		pbuf = NULL;
 	}
 	if (doc) {
-		doc_close(doc);
+		doc->close(doc);
 		doc = NULL;
 	}
 	return retval;

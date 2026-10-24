@@ -34,7 +34,7 @@ extern int bpp;
 
 int is_text(const char *path);
 int is_pdf(const char *path);
-int show_pdf(char *path);
+int show_doc(char *path);
 int show_text(char *path);
 
 static void fm_trim_slash(char *path)
@@ -148,7 +148,7 @@ static int fm_enter(struct fm_view *v)
 	if (!v->ents[v->sel].isreg)
 		return 1;	/* 设备、管道等不做处理 */
 	if (is_pdf(v->ents[v->sel].name)) {
-		show_pdf(next);
+		show_doc(next);
 		return 0;
 	}
 	if (!is_text(next))

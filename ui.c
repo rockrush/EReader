@@ -162,7 +162,7 @@ static void draw_power(int x, int y, int w, int h)
 	int thick = MAX(1, w / 27);
 	int r = w / 4;
 	draw_arc(x + h / 2, y + w / 2, r, M_PI + 0.6f, 3 * M_PI - 0.6f, thick, UI_ICON, UI_ICON, UI_ICON);
-	draw_thick_line(x + h / 2 - r, y + w / 2, x + h / 2 + r / 2, y + w / 2, w / 12, UI_ICON);
+	draw_thick_line(x + h / 2 - r, y + w / 2, x + h / 2 + r / 3, y + w / 2, w / 12, UI_ICON);
 }
 
 /* WiFi 徽标：以 (cx, cy) 为中心画边长为 size 的圆角正方形黑框，
@@ -238,6 +238,7 @@ static int battery_pct(void)
 }
 
 static int8_t wifi_level(void) {
+	return 2;
 	char line[256];
 	int link = 0, level = -100, noise = 0, line_no = 0;
 	FILE *fp = fopen("/proc/net/wireless", "r");
@@ -291,10 +292,9 @@ static void draw_time(void)
 	fill_rect(cfg.scr_w - cfg.ui_w, cfg.view_w, cfg.ui_w, cfg.ui_w, UI_SHADOW, UI_SHADOW, UI_SHADOW);
 	for (int i = 0; i < 3; i++) {
 		int n = (int) strlen(cols[i]);
-		/* 各列在高度内居中，再从最下方字符开始向上写 */
-		int x0 = -cfg.ui_w + (cfg.ui_w - n * cell) / 2;
+		int x0 = -cfg.ui_w + (cfg.ui_w - n * cell) / 2;	// 各列在高度内居中，再从最下方字符开始向上写
 		text(x0, y, cols[i], 8 * FBM_FONT_SCALE, UI_ICON, UI_ICON, UI_ICON);
-		y += cell + (cfg.ui_w - 3 * cell) / 2;
+		y += cell + (cfg.ui_w - 3 * cell) / 3;
 	}
 }
 
@@ -314,8 +314,8 @@ void *draw_ui(void *arg)
 		draw_button(x, cfg.view_w, cfg.ui_w, btn_h);
 
 		switch (i) {
-		case 0: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, -1); break;	/* 上一页 */
-		case 1: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, +1); break;	/* 下一页 */
+		case 0: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, +1); break;	/* 上一页 */
+		case 1: draw_arrow(x, cfg.view_w, cfg.ui_w, btn_h, -1); break;	/* 下一页 */
 		case 2: draw_go(x, cfg.view_w, cfg.ui_w, btn_h, -1); break;	/* 确认 */
 		case 3: draw_go(x, cfg.view_w, cfg.ui_w, btn_h, +1); break;	/* 返回 */
 		case 4: draw_refresh(x, cfg.view_w, cfg.ui_w, btn_h); break;	/* 刷新 */

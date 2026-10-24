@@ -1,13 +1,13 @@
-CFLAGS = -Wall -O2 -Wunused -Wunused-function
-LDFLAGS = $(shell pkg-config --libs libfyaml freetype2 fontconfig poppler-cpp)
+CFLAGS = -Wall -O2 -Wunused -Wunused-function $(shell pkg-config --cflags fontconfig sqlite3)
+LDFLAGS = $(shell pkg-config --libs sqlite3 freetype2 fontconfig poppler-cpp)
 SRCS=$(wildcard *.c)
-OBJS=${SRCS:.c=.o} poppler.o
+OBJS=${SRCS:.c=.o}
 
 %.o: %.c doc.h
-	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags freetype2 fontconfig) $<
+	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags freetype2) $<
 
-ereader: $(OBJS)
-	$(CXX) -o $@ $^ $(LDFLAGS)
+ereader: poppler.cc $(OBJS)
+	$(CXX) $(CFLAGS) -o $@ $^ $(FC_LIBS) $(shell pkg-config --cflags poppler-cpp) $(LDFLAGS)
 
 .PHONY: clean count
 clean:

@@ -1,13 +1,18 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <signal.h>
 #include <pthread.h>
 #include <sys/stat.h>
-#include <libfyaml.h>
 
 #include "draw.h"
 #include "ereader.h"
+#include "db.h"
+
+#define DEFAULT_PATH	"data"
+#define DB_FILE		"ereader.db"	// 配置数据库文件名
 
 struct ereader_cfg cfg;
 
@@ -19,7 +24,7 @@ int font_load(void);
 void font_close(void);
 void *draw_ui(void *arg);
 int show_text(const char *path);
-int show_pdf(char *path);
+int show_doc(char *path);
 int show_filemgr(char *path);
 
 /* 粗略判断文本文件：前 4KB 无 NUL 字节，且至少九成是可打印字符 */
@@ -85,7 +90,7 @@ static void ebook(void) {
 			goto _parent;
 
 		if (is_pdf(base)) {
-			show_pdf(tmp_path);
+			show_doc(tmp_path);
 			goto _parent;
 		}
 
@@ -111,27 +116,22 @@ static void sigint(int sig) {
 
 int main(int argc, char *argv[])
 {
-	struct fy_document *fyd = fy_document_build_from_file(NULL, "./ereader.yml");
-	if (!fyd) {
-		fprintf(stderr, "cannot parse ereader.yml\n");
+	if (db_open(DB_FILE)) {
+		fprintf(stderr, "cannot open <%s>\n", DB_FILE);
 		return 1;
 	}
-	memset(cfg.path, 0, PATH_MAX);
-	int count = fy_document_scanf(fyd, "/path %s /page %u", cfg.path, &cur_page);
-	if (count != 2) {
-		fy_document_destroy(fyd);
-		return 1;
+	if (db_get_config("path", cfg.path, sizeof(cfg.path))) {
+		strncpy(cfg.path, DEFAULT_PATH, sizeof(cfg.path) - 1);
+		cfg.path[sizeof(cfg.path) - 1] = 0;
+		if (db_set_config("path", cfg.path))
+			fprintf(stderr, "cannot save path to <%s>\n", DB_FILE);
 	}
-	fy_document_destroy(fyd);
 
-	if (fb_init("/dev/fb0"))	// 设置 scr_h、scr_w
+	if (fb_init("/dev/fb0")) {
+		db_close();
 		return 1;
-	cfg.ui_w = cfg.scr_h - cfg.scr_w * 210 / 297;	// A4 幅面剩余部分显示UI
-	if (cfg.ui_w < 32)
-		cfg.ui_w = 0;
-	cfg.view_w = cfg.scr_h - cfg.ui_w;
+	}
 	cfg.running = true;
-	printf("> %d, %d, %d, %d, %d\n", cfg.scr_w, cfg.scr_h, cfg.view_w, cfg.view_h, cfg.ui_w);
 
 	graph_mode(true);
 	signal(SIGCONT, sigcont);
@@ -140,5 +140,6 @@ int main(int argc, char *argv[])
 	ebook();
 	graph_mode(false);
 	fb_free();
+	db_close();
 	return 0;
 }

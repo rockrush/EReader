@@ -1,0 +1,23 @@
+# /etc/init.conf
+# Single configuration file for init services
+
+# Wi-Fi
+WIFI_ENABLED=0
+SSID=MyNetwork
+PSK=my-secret-passphrase
+KEY_MGMT=WPA-PSK
+
+# SSH (disabled by default)
+SSH_ENABLED=1
+
+# Ethernet static IP (optional; set ETH_IP to enable)
+ETH_ENABLED=1
+ETH_IFACE=enp1s0
+ETH_IP=192.168.122.98
+ETH_NETMASK=255.255.255.0
+ETH_PREFIX=24
+ETH_GATEWAY=192.168.122.1
+ETH_DNS=8.8.8.8
+
+# Default working directory when opening bash on tty1
+# DEFAULT_PATH=/root
